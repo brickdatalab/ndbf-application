@@ -11,6 +11,14 @@
     @apply font-body text-ink-body bg-surface-tint;
     font-feature-settings: "cv11", "ss01";
   }
+  /* iOS Safari auto-zooms when a form control's font-size is < 16px on focus.
+     Pinning all form controls to 16px stops the zoom-in / horizontal scroll glitch. */
+  input,
+  select,
+  textarea,
+  button {
+    font-size: 16px;
+  }
   h1,
   h2,
   h3,

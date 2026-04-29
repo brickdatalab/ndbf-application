@@ -43,3 +43,6 @@ pnpm-debug.log*
 # Backend (server/) installs its own deps separately on the VM
 server/node_modules/
 server/.env
+
+# Local working log — keep out of the repo for now (flip this line when ready to track)
+CHANGELOG.md

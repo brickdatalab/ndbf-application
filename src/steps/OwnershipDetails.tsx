@@ -1,19 +1,29 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, User } from "lucide-react";
 import { useAppStore } from "../store";
 import { FormField } from "../components/ui/FormField";
-import { Input } from "../components/ui/Input";
+import { Input, Select } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
-import { AddressAutocomplete } from "../components/AddressAutocomplete";
-import { DatePicker } from "../components/DatePicker";
+import { DOBPicker } from "../components/DOBPicker";
+import { US_STATES } from "../lib/constants";
 import { formatSSN } from "../lib/utils";
 
 export function OwnershipDetails() {
   const owner = useAppStore((s) => s.formData.owner);
+  const contactName = useAppStore((s) => s.formData.contactName);
   const updateOwner = useAppStore((s) => s.updateOwner);
   const next = useAppStore((s) => s.nextStep);
   const prev = useAppStore((s) => s.prevStep);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Pre-fill the owner's full name from the contact step if it isn't set yet.
+  // Still editable — we only set it if owner.fullName is empty so we don't clobber edits.
+  useEffect(() => {
+    if (!owner.fullName && contactName) {
+      updateOwner({ fullName: contactName });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const validate = (): boolean => {
     const e: Record<string, string> = {};
@@ -25,8 +35,13 @@ export function OwnershipDetails() {
     if (!/^\d{3}-\d{2}-\d{4}$/.test(owner.ssn)) {
       e.ssn = "Must be in XXX-XX-XXXX format";
     }
-    if (!owner.dateOfBirth) e.dateOfBirth = "Required";
-    if (!owner.address.street) e.address = "Please select your home address";
+    if (!owner.dateOfBirth || !/^\d{4}-\d{2}-\d{2}$/.test(owner.dateOfBirth)) {
+      e.dateOfBirth = "Select your date of birth";
+    }
+    if (!owner.address.street) e.street = "Required";
+    if (!owner.address.city) e.city = "Required";
+    if (!owner.address.state) e.state = "Required";
+    if (!/^\d{5}$/.test(owner.address.zip)) e.zip = "Must be a 5-digit ZIP";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -36,8 +51,8 @@ export function OwnershipDetails() {
     if (validate()) next();
   };
 
-  // Ensure DOB is at least 18 years ago and not in the future
-  const currentYear = new Date().getFullYear();
+  const updateOwnerAddress = (patch: Partial<typeof owner.address>) =>
+    updateOwner({ address: { ...owner.address, ...patch } });
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6 md:space-y-8">
@@ -73,6 +88,7 @@ export function OwnershipDetails() {
               value={owner.fullName}
               onChange={(e) => updateOwner({ fullName: e.target.value })}
               placeholder="Enter owner's full name"
+              autoComplete="name"
             />
           </FormField>
 
@@ -93,7 +109,9 @@ export function OwnershipDetails() {
                 onChange={(e) =>
                   updateOwner({
                     ownershipPercentage:
-                      e.target.value === "" ? "" : Math.max(0, Math.min(100, Number(e.target.value))),
+                      e.target.value === ""
+                        ? ""
+                        : Math.max(0, Math.min(100, Number(e.target.value))),
                   })
                 }
                 placeholder="Enter percentage"
@@ -124,37 +142,77 @@ export function OwnershipDetails() {
             />
           </FormField>
 
-          <FormField
-            label="Date of Birth"
-            required
-            htmlFor="dob"
-            error={errors.dateOfBirth}
-          >
-            <DatePicker
-              id="dob"
+          <FormField label="Date of Birth" required error={errors.dateOfBirth}>
+            <DOBPicker
               value={owner.dateOfBirth}
               onChange={(iso) => updateOwner({ dateOfBirth: iso })}
-              minYear={currentYear - 100}
-              maxYear={currentYear - 18}
-              placeholder="Select date of birth"
             />
           </FormField>
         </div>
 
-        <FormField
-          label="Home Address"
-          required
-          htmlFor="ownerAddress"
-          help="Start typing and select your address from the list."
-          error={errors.address}
-        >
-          <AddressAutocomplete
-            id="ownerAddress"
-            value={owner.address}
-            onChange={(a) => updateOwner({ address: a })}
-            placeholder="123 Main St, New York, NY 10001"
-          />
-        </FormField>
+        {/* Home address — four discrete fields, matching Step 2's address layout */}
+        <div className="space-y-3">
+          <div className="flex items-baseline gap-1.5">
+            <label className="text-sm font-semibold text-brand-navy">Home Address</label>
+            <span className="text-red-500">*</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Input
+                placeholder="Street Address"
+                value={owner.address.street}
+                onChange={(e) => updateOwnerAddress({ street: e.target.value })}
+                autoComplete="street-address"
+              />
+              {errors.street && (
+                <p className="text-xs text-red-500 mt-1.5">{errors.street}</p>
+              )}
+            </div>
+            <div>
+              <Input
+                placeholder="City"
+                value={owner.address.city}
+                onChange={(e) => updateOwnerAddress({ city: e.target.value })}
+                autoComplete="address-level2"
+              />
+              {errors.city && (
+                <p className="text-xs text-red-500 mt-1.5">{errors.city}</p>
+              )}
+            </div>
+            <div>
+              <Select
+                placeholder="Select State"
+                value={owner.address.state}
+                onChange={(e) => updateOwnerAddress({ state: e.target.value })}
+                aria-label="State"
+              >
+                {US_STATES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+              {errors.state && (
+                <p className="text-xs text-red-500 mt-1.5">{errors.state}</p>
+              )}
+            </div>
+            <div>
+              <Input
+                placeholder="ZIP Code"
+                inputMode="numeric"
+                maxLength={5}
+                value={owner.address.zip}
+                onChange={(e) =>
+                  updateOwnerAddress({
+                    zip: e.target.value.replace(/\D/g, "").slice(0, 5),
+                  })
+                }
+                autoComplete="postal-code"
+              />
+              {errors.zip && <p className="text-xs text-red-500 mt-1.5">{errors.zip}</p>}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row-reverse sm:justify-between gap-3 pt-4 border-t border-divider-soft">

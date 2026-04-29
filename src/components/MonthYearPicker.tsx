@@ -1,4 +1,3 @@
-import { Calendar } from "lucide-react";
 import { MONTHS, YEARS } from "../lib/constants";
 import { Select } from "./ui/Input";
 
@@ -9,18 +8,19 @@ type Props = {
   idBase?: string;
 };
 
+/**
+ * Inline Month + Year dropdowns. No calendar icon, no popovers.
+ * Used for "Date Business Started" where we don't need day-precision.
+ */
 export function MonthYearPicker({ month, year, onChange, idBase = "started" }: Props) {
   return (
-    <div className="flex items-stretch gap-2">
-      <div className="flex items-center pl-3 pr-1 rounded-lg border border-divider-muted bg-white shadow-input text-ink-muted">
-        <Calendar className="h-4 w-4" />
-      </div>
+    <div className="grid grid-cols-2 gap-3">
       <Select
         id={`${idBase}-month`}
         placeholder="Month"
         value={month}
         onChange={(e) => onChange({ month: e.target.value })}
-        className="flex-1"
+        aria-label="Month"
       >
         {MONTHS.map((m) => (
           <option key={m.value} value={m.value}>
@@ -33,7 +33,7 @@ export function MonthYearPicker({ month, year, onChange, idBase = "started" }: P
         placeholder="Year"
         value={year}
         onChange={(e) => onChange({ year: e.target.value })}
-        className="w-32"
+        aria-label="Year"
       >
         {YEARS.map((y) => (
           <option key={y} value={y}>

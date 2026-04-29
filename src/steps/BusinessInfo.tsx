@@ -245,7 +245,6 @@ export function BusinessInfo() {
           label="Date Business Started"
           required
           error={errors.businessStarted}
-          help="Month and year is fine — no need for the exact day."
         >
           <MonthYearPicker
             month={f.businessStartedMonth}
