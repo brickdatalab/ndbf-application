@@ -68,19 +68,14 @@ export function slugify(s: string): string {
     .slice(0, 60);
 }
 
-/** Redact an email for PDF display: j***s@example.com */
-export function redactEmail(email: string): string {
-  if (!email || !email.includes("@")) return "[redacted]";
-  const [local, domain] = email.split("@");
-  if (local.length <= 2) return `${local[0] ?? ""}***@${domain}`;
-  return `${local[0]}${"*".repeat(Math.max(1, local.length - 2))}${local.slice(-1)}@${domain}`;
+/** Fully redact an email for PDF display — no info leaked. */
+export function redactEmail(_email: string): string {
+  return "***********";
 }
 
-/** Redact a phone for PDF display: (XXX) XXX-1234 */
-export function redactPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length < 4) return "(XXX) XXX-XXXX";
-  return `(XXX) XXX-${digits.slice(-4)}`;
+/** Fully redact a phone for PDF display — no digits leaked. */
+export function redactPhone(_phone: string): string {
+  return "(XXX) XXX-XXXX";
 }
 
 /** Format a sales-bucket value as its label. */
