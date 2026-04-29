@@ -6,13 +6,19 @@ export function Layout({ children }: { children: ReactNode }) {
       {/* Brand header */}
       <header className="w-full bg-brand-navy py-5 shadow-md">
         <div className="max-w-5xl mx-auto px-4 md:px-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <a
+            href="https://nextdaybizfunding.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="NextDay Biz Funding home"
+            className="inline-flex items-center gap-3 rounded-md focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/40 transition-opacity hover:opacity-90"
+          >
             <img
               src="/logo.png"
               alt="NextDay Biz Funding"
               className="h-10 md:h-12 object-contain"
             />
-          </div>
+          </a>
           <div className="hidden sm:flex items-center gap-2 text-white/80 text-sm font-body">
             <span className="h-2 w-2 rounded-full bg-cta-orange shadow-[0_0_10px_rgba(255,102,0,0.9)]"></span>
             Secure Application

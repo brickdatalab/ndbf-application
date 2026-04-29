@@ -46,7 +46,32 @@ export async function generateApplicationPdf({
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   let y = 18;
 
+  // Diagonal "nextdaybizfunding" watermark drawn first on every page so it sits
+  // behind all subsequent content. Faint navy at low opacity, rotated ~30° so it
+  // runs from the bottom-left toward the upper-right corner of the page.
+  const drawWatermark = () => {
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    doc.saveGraphicsState();
+    // jsPDF's GState API isn't fully typed in older @types — cast to any so TS doesn't complain.
+    // Opacity 0.07 keeps the mark visible on screen but unobtrusive over text.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const GState = (doc as any).GState;
+    if (GState) doc.setGState(new GState({ opacity: 0.07 }));
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(72);
+    doc.setTextColor(...C_NAVY);
+    doc.text("nextdaybizfunding", pageW / 2, pageH / 2, {
+      align: "center",
+      angle: 30,
+      baseline: "middle",
+    });
+    doc.restoreGraphicsState();
+  };
+
   const drawHeader = () => {
+    // Draw the watermark first so it sits underneath the header bar + page content.
+    drawWatermark();
     doc.setFillColor(...C_NAVY);
     doc.rect(0, 0, PAGE_W, 14, "F");
     doc.setTextColor(255, 255, 255);
@@ -251,15 +276,17 @@ export async function generateApplicationPdf({
   }
 
   // Section 5 — Authorization + signature
+  // Tightened to ~7pt with a 2.7mm line height so the full 3-paragraph clause
+  // fits on the same page as the rest of the form data.
   sectionTitle("Authorization and Agreement");
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
+  doc.setFontSize(7);
   doc.setTextColor(...C_BODY);
   for (const para of TERMS_PARAGRAPHS) {
-    ensureSpace(10);
+    ensureSpace(8);
     const lines = doc.splitTextToSize(para, RIGHT - MARGIN_X);
     doc.text(lines, MARGIN_X, y);
-    y += 3.4 * lines.length + 2;
+    y += 2.7 * lines.length + 1.5;
   }
 
   // Signature block
