@@ -44,5 +44,9 @@ pnpm-debug.log*
 server/node_modules/
 server/.env
 
+# Email worker (emailer/) installs its own deps separately on the VM
+emailer/node_modules/
+emailer/.env
+
 # Local working log — keep out of the repo for now (flip this line when ready to track)
 CHANGELOG.md

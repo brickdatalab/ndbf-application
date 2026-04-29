@@ -11,6 +11,7 @@ import cors from "cors";
 import multer from "multer";
 import { Storage } from "@google-cloud/storage";
 import { BigQuery } from "@google-cloud/bigquery";
+import { PubSub } from "@google-cloud/pubsub";
 
 // ---------- Config ----------
 
@@ -18,6 +19,7 @@ const PROJECT_ID = process.env.PROJECT_ID || "lithe-hallway-493420-r4";
 const BUCKET_NAME = process.env.BUCKET_NAME || "app_banks";
 const BQ_DATASET = process.env.BQ_DATASET || "ndbf_applications";
 const BQ_TABLE = process.env.BQ_TABLE || "submissions";
+const NOTIFY_TOPIC = process.env.NOTIFY_TOPIC || "submission-completed";
 const PORT = Number(process.env.PORT || 8080);
 const MAX_FILES = 10;
 const MAX_FILE_SIZE_MB = 25;
@@ -28,6 +30,8 @@ const storage = new Storage({ projectId: PROJECT_ID });
 const bucket = storage.bucket(BUCKET_NAME);
 const bigquery = new BigQuery({ projectId: PROJECT_ID });
 const bqTable = bigquery.dataset(BQ_DATASET).table(BQ_TABLE);
+const pubsub = new PubSub({ projectId: PROJECT_ID });
+const notifyTopic = pubsub.topic(NOTIFY_TOPIC);
 
 // ---------- Express ----------
 
@@ -281,6 +285,23 @@ app.post(
       });
 
       await bqTable.insert([row], { raw: false, skipInvalidRows: false, ignoreUnknownValues: false });
+
+      // Fire-and-forget notification to the email worker. Wrapped in try/catch
+      // and bounded by a 2s timeout so a Pub/Sub blip never affects the
+      // applicant's submit response. The submission is already persisted at
+      // this point — the notification is purely out-of-band.
+      try {
+        const publishPromise = notifyTopic.publishMessage({
+          json: { entry_id: entryId, gcs_folder: `gs://${BUCKET_NAME}/${folder}` },
+          attributes: { entry_id: entryId },
+        });
+        await Promise.race([
+          publishPromise,
+          new Promise((resolve) => setTimeout(resolve, 2000)),
+        ]);
+      } catch (publishErr) {
+        console.error(`[submit] entryId=${entryId} pubsub publish failed (non-fatal):`, publishErr.message);
+      }
 
       const elapsedMs = Date.now() - reqStart;
       console.log(

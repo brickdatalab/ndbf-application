@@ -4,6 +4,9 @@
 # Backend mirror (deployed to the GCP VM, not Vercel)
 server/
 
+# Email worker (deployed to the GCP VM, not Vercel)
+emailer/
+
 # Documentation only (kept in the repo for reference, not needed at runtime)
 PRE-PROD-PLAN.md
 INFRA.md
