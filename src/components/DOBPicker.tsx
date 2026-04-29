@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MONTHS } from "../lib/constants";
 import { Select } from "./ui/Input";
 
@@ -21,14 +21,13 @@ function parseIso(v: string): { y: string; m: string; d: string } {
   return { y: y || "", m: m ? String(Number(m)) : "", d: d ? String(Number(d)) : "" };
 }
 
-function buildIso(m: string, d: string, y: string) {
-  if (!m || !d || !y) return "";
-  return `${y}-${pad2(m)}-${pad2(d)}`;
-}
-
 /**
- * Inline Month / Day / Year picker for DOB. Tab-friendly (three real <select>s)
- * and visually consistent with MonthYearPicker.
+ * Inline Month / Day / Year picker for DOB.
+ *
+ * Tracks each field as local state so partial selections (e.g., user picked
+ * Month but hasn't picked Day or Year yet) stay visible in the UI. Only emits
+ * a full ISO string upward when all three are set; emits "" if a previously
+ * complete value is cleared.
  */
 export function DOBPicker({ value, onChange, idBase = "dob", maxYear, minYear }: Props) {
   const now = new Date();
@@ -41,12 +40,40 @@ export function DOBPicker({ value, onChange, idBase = "dob", maxYear, minYear }:
     return out;
   }, [yMax, yMin]);
 
-  const { y, m, d } = parseIso(value);
+  // Local state for the three fields, seeded from any incoming value.
+  const initial = parseIso(value);
+  const [m, setM] = useState(initial.m);
+  const [d, setD] = useState(initial.d);
+  const [y, setY] = useState(initial.y);
 
-  // Days available depend on selected month/year (handles leap years + 30/31).
+  // Sync FROM parent when the prop changes externally (e.g., user navigates
+  // back, store rehydrates). Avoid clobbering local state during the same
+  // emit-cycle by comparing what we last emitted to the incoming value.
+  const lastEmitted = useRef<string>(value);
+  useEffect(() => {
+    if (value === lastEmitted.current) return;
+    const p = parseIso(value);
+    setM(p.m);
+    setD(p.d);
+    setY(p.y);
+  }, [value]);
+
+  // Whenever the local triplet changes, emit upward.
+  useEffect(() => {
+    let next = "";
+    if (m && d && y) next = `${y}-${pad2(m)}-${pad2(d)}`;
+    if (next === lastEmitted.current) return;
+    lastEmitted.current = next;
+    onChange(next);
+    // Intentionally not depending on onChange (parent may pass a fresh fn each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m, d, y]);
+
+  // Days available depend on selected month/year (handles leap + 30/31).
   const daysInMonth = useMemo(() => {
-    if (!m || !y) return 31;
-    return new Date(Number(y), Number(m), 0).getDate();
+    if (!m) return 31;
+    const yr = y ? Number(y) : 2000; // leap year fallback so Feb shows 29 if no year picked
+    return new Date(yr, Number(m), 0).getDate();
   }, [m, y]);
 
   const days = useMemo(
@@ -54,25 +81,24 @@ export function DOBPicker({ value, onChange, idBase = "dob", maxYear, minYear }:
     [daysInMonth]
   );
 
-  const setMonth = (next: string) => {
-    // If the previously selected day is now out of range (e.g., Feb 30), clamp it.
-    let nextDay = d;
-    if (next && y) {
-      const dim = new Date(Number(y), Number(next), 0).getDate();
-      if (Number(d) > dim) nextDay = String(dim);
-    }
-    onChange(buildIso(next, nextDay, y));
+  // Clamp helpers when month/year change so an invalid day never lingers.
+  const clampDay = (nm: string, ny: string, currD: string): string => {
+    if (!nm || !currD) return currD;
+    const yr = ny ? Number(ny) : 2000;
+    const dim = new Date(yr, Number(nm), 0).getDate();
+    return Number(currD) > dim ? String(dim) : currD;
   };
 
-  const setDay = (next: string) => onChange(buildIso(m, next, y));
+  const handleMonth = (next: string) => {
+    setM(next);
+    setD((curr) => clampDay(next, y, curr));
+  };
 
-  const setYear = (next: string) => {
-    let nextDay = d;
-    if (m && next) {
-      const dim = new Date(Number(next), Number(m), 0).getDate();
-      if (Number(d) > dim) nextDay = String(dim);
-    }
-    onChange(buildIso(m, nextDay, next));
+  const handleDay = (next: string) => setD(next);
+
+  const handleYear = (next: string) => {
+    setY(next);
+    setD((curr) => clampDay(m, next, curr));
   };
 
   return (
@@ -81,7 +107,7 @@ export function DOBPicker({ value, onChange, idBase = "dob", maxYear, minYear }:
         id={`${idBase}-month`}
         placeholder="Month"
         value={m}
-        onChange={(e) => setMonth(e.target.value)}
+        onChange={(e) => handleMonth(e.target.value)}
         aria-label="Birth month"
       >
         {MONTHS.map((opt) => (
@@ -94,7 +120,7 @@ export function DOBPicker({ value, onChange, idBase = "dob", maxYear, minYear }:
         id={`${idBase}-day`}
         placeholder="Day"
         value={d}
-        onChange={(e) => setDay(e.target.value)}
+        onChange={(e) => handleDay(e.target.value)}
         aria-label="Birth day"
       >
         {days.map((opt) => (
@@ -107,7 +133,7 @@ export function DOBPicker({ value, onChange, idBase = "dob", maxYear, minYear }:
         id={`${idBase}-year`}
         placeholder="Year"
         value={y}
-        onChange={(e) => setYear(e.target.value)}
+        onChange={(e) => handleYear(e.target.value)}
         aria-label="Birth year"
       >
         {years.map((opt) => (
