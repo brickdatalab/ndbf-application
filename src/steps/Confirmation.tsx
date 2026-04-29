@@ -42,7 +42,7 @@ export function Confirmation() {
           <dt className="font-semibold text-brand-navy">Status</dt>
           <dd className="text-ink-body">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-blue/10 text-brand-blueDark px-2.5 py-0.5 text-xs font-semibold">
-              Under Review
+              Underwriting
             </span>
           </dd>
         </dl>
