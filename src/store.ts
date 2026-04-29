@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 export type Address = {
   street: string;
@@ -182,12 +182,17 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "ndbf-application-demo",
+      // sessionStorage scopes the persisted state to a single tab. Closing the tab
+      // wipes everything, so other applicants on the same device — or the same user
+      // returning later in a fresh tab — always start with an empty form.
+      // Refreshing within the same tab still preserves in-progress field values.
+      storage: createJSONStorage(() => sessionStorage),
       // Files can't be serialized, and we don't want to persist signature/step-5 secrets.
+      // We also intentionally drop submission-state (isSubmitted/entryId/submittedAt)
+      // so a tab refresh after submission lands on the fresh form rather than the
+      // confirmation screen.
       partialize: (s) => ({
         currentStep: s.currentStep,
-        isSubmitted: s.isSubmitted,
-        entryId: s.entryId,
-        submittedAt: s.submittedAt,
         appParam: s.appParam,
         utm: s.utm,
         formData: {
