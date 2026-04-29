@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale=1.0 stops iOS Safari from auto-zooming on input focus.
+         Trade-off: disables pinch-to-zoom on the page itself. OS-level text-size
+         settings still work. For a single-task application form this is the
+         right trade. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
     <meta name="description" content="Apply now with NextDay Biz Funding. Fast, flexible business funding from $10K to $5M." />
 
     <title>NextDay Biz Funding — Application</title>
