@@ -1,0 +1,317 @@
+// NDBF application submission backend.
+// Receives multipart form submissions from the React frontend,
+// writes uploaded files + generated PDF to gs://app_banks/{slug}_{entry_id}/,
+// and inserts one row into BigQuery ndbf_applications.submissions.
+//
+// Auth: uses the VM's attached service account (Application Default Credentials).
+// No secrets needed in env.
+
+import express from "express";
+import cors from "cors";
+import multer from "multer";
+import { Storage } from "@google-cloud/storage";
+import { BigQuery } from "@google-cloud/bigquery";
+
+// ---------- Config ----------
+
+const PROJECT_ID = process.env.PROJECT_ID || "lithe-hallway-493420-r4";
+const BUCKET_NAME = process.env.BUCKET_NAME || "app_banks";
+const BQ_DATASET = process.env.BQ_DATASET || "ndbf_applications";
+const BQ_TABLE = process.env.BQ_TABLE || "submissions";
+const PORT = Number(process.env.PORT || 8080);
+const MAX_FILES = 10;
+const MAX_FILE_SIZE_MB = 25;
+
+// ---------- Clients ----------
+
+const storage = new Storage({ projectId: PROJECT_ID });
+const bucket = storage.bucket(BUCKET_NAME);
+const bigquery = new BigQuery({ projectId: PROJECT_ID });
+const bqTable = bigquery.dataset(BQ_DATASET).table(BQ_TABLE);
+
+// ---------- Express ----------
+
+const app = express();
+
+// CORS: allow the Vercel demo origins, the eventual NDBF subdomain, and localhost dev.
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // curl / server-to-server
+      const allow =
+        /\.vercel\.app$/i.test(origin) ||
+        /(^|\.)nextdaybizfunding\.com$/i.test(origin) ||
+        /^https?:\/\/localhost(:\d+)?$/i.test(origin) ||
+        /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin);
+      return cb(allow ? null : new Error(`CORS blocked for origin ${origin}`), allow);
+    },
+    credentials: false,
+  })
+);
+
+app.use(express.json({ limit: "5mb" }));
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_FILE_SIZE_MB * 1024 * 1024,
+    files: MAX_FILES + 1, // + 1 for the generated PDF
+  },
+});
+
+// ---------- Helpers ----------
+
+const ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
+function shortId(len = 8) {
+  let out = "";
+  for (let i = 0; i < len; i++) {
+    out += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+  }
+  return out;
+}
+
+function slugify(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 60) || "unknown";
+}
+
+function iso() {
+  return new Date().toISOString();
+}
+
+async function uploadToGcs({ folder, filename, buffer, contentType }) {
+  const objectName = `${folder}/${filename}`;
+  const file = bucket.file(objectName);
+  await file.save(buffer, {
+    contentType: contentType || "application/octet-stream",
+    resumable: false,
+    metadata: { cacheControl: "private, max-age=0, no-transform" },
+  });
+  return `gs://${BUCKET_NAME}/${objectName}`;
+}
+
+function pickNum(v) {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pickStr(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
+}
+
+function monthYearToStartDate(m, y) {
+  const month = pickNum(m);
+  const year = pickNum(y);
+  if (!month || !year) return { m: null, y: null };
+  return { m: month, y: year };
+}
+
+// Parse sales bucket to a canonical string (we store the label too in raw JSON)
+function mapSalesBucket(b) {
+  return pickStr(b); // already a short key like "gt_5m"
+}
+
+// Map the client payload to a BigQuery row matching the submissions schema.
+function buildBqRow({ entryId, submittedAt, payload, gcsFolder, bankKeys, pdfKey, ipAddress, userAgent }) {
+  const f = payload.formData || {};
+  const owner = f.owner || {};
+  const addr = f.physicalAddress || {};
+  const oAddr = owner.address || {};
+  const utm = payload.utm || {};
+  const { m: startedM, y: startedY } = monthYearToStartDate(f.businessStartedMonth, f.businessStartedYear);
+
+  return {
+    entry_id: entryId,
+    submitted_at: submittedAt,
+    app_param: pickStr(payload.appParam),
+    utm_source: pickStr(utm.utm_source),
+    utm_medium: pickStr(utm.utm_medium),
+    utm_campaign: pickStr(utm.utm_campaign),
+    utm_term: pickStr(utm.utm_term),
+    utm_content: pickStr(utm.utm_content),
+    referrer: pickStr(utm.referrer),
+    ip_address: ipAddress || null,
+    user_agent: userAgent || null,
+
+    contact_name: pickStr(f.contactName),
+    contact_email: pickStr(f.contactEmail),
+    contact_phone: pickStr(f.contactPhone),
+
+    business_legal_name: pickStr(f.businessLegalName),
+    dba: pickStr(f.dba),
+    business_physical_street: pickStr(addr.street),
+    business_physical_city: pickStr(addr.city),
+    business_physical_state: pickStr(addr.state),
+    business_physical_zip: pickStr(addr.zip),
+    industry: pickStr(f.industry),
+    industry_other: pickStr(f.industryOther),
+    state_of_incorporation: pickStr(f.stateOfIncorporation),
+    business_started_month: startedM,
+    business_started_year: startedY,
+    federal_tax_id: pickStr(f.federalTaxId),
+    business_entity_type: pickStr(f.businessEntityType),
+    gross_annual_sales_bucket: mapSalesBucket(f.grossAnnualSalesBucket),
+    requested_funding_amount: pickNum(f.requestedFundingAmount),
+
+    owner_full_name: pickStr(owner.fullName),
+    owner_ownership_percentage: pickNum(owner.ownershipPercentage),
+    owner_ssn: pickStr(owner.ssn),
+    owner_dob: pickStr(owner.dateOfBirth), // YYYY-MM-DD
+    owner_address_street: pickStr(oAddr.street),
+    owner_address_city: pickStr(oAddr.city),
+    owner_address_state: pickStr(oAddr.state),
+    owner_address_zip: pickStr(oAddr.zip),
+
+    bank_statement_gcs_keys: bankKeys,
+    pdf_gcs_key: pdfKey || null,
+    gcs_folder: `gs://${BUCKET_NAME}/${gcsFolder}`,
+
+    signature_captured: Boolean(f.signature),
+    terms_accepted: Boolean(f.termsAccepted),
+
+    raw_payload_json: JSON.stringify(payload),
+  };
+}
+
+// ---------- Routes ----------
+
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "ndbf-backend",
+    project: PROJECT_ID,
+    bucket: BUCKET_NAME,
+    dataset: BQ_DATASET,
+    table: BQ_TABLE,
+    time: iso(),
+  });
+});
+
+app.get("/", (_req, res) => {
+  res.json({ ok: true, service: "ndbf-backend" });
+});
+
+// Main submission endpoint.
+// Expects multipart/form-data with:
+//   - payload    : JSON string  (form data, utm, appParam)
+//   - pdf        : File         (client-generated application PDF) [optional]
+//   - banks      : File(s)      (uploaded bank statements, up to MAX_FILES)
+app.post(
+  "/api/submit",
+  upload.fields([
+    { name: "pdf", maxCount: 1 },
+    { name: "banks", maxCount: MAX_FILES },
+  ]),
+  async (req, res) => {
+    const reqStart = Date.now();
+    try {
+      const raw = req.body?.payload;
+      if (!raw) {
+        return res.status(400).json({ ok: false, error: "Missing payload field" });
+      }
+      let payload;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return res.status(400).json({ ok: false, error: "Invalid JSON in payload" });
+      }
+
+      const entryId = `ndbf_${shortId(8)}`;
+      const submittedAt = iso();
+      const slug = slugify(payload?.formData?.businessLegalName || "unknown");
+      const folder = `${slug}_${entryId}`;
+
+      // Upload bank statements + PDF to GCS in parallel.
+      const pdfFile = (req.files?.pdf || [])[0];
+      const bankFiles = req.files?.banks || [];
+
+      const uploadPromises = [];
+
+      for (let i = 0; i < bankFiles.length; i++) {
+        const f = bankFiles[i];
+        const safe = String(f.originalname || `statement_${i + 1}`).replace(/[^\w.\- ]+/g, "_");
+        uploadPromises.push(
+          uploadToGcs({
+            folder,
+            filename: `bank_${String(i + 1).padStart(2, "0")}_${safe}`,
+            buffer: f.buffer,
+            contentType: f.mimetype || "application/octet-stream",
+          })
+        );
+      }
+
+      let pdfPromise = null;
+      if (pdfFile) {
+        pdfPromise = uploadToGcs({
+          folder,
+          filename: `${slug}_${entryId}.pdf`,
+          buffer: pdfFile.buffer,
+          contentType: "application/pdf",
+        });
+      }
+
+      const [bankKeys, pdfKey] = await Promise.all([
+        Promise.all(uploadPromises),
+        pdfPromise || Promise.resolve(null),
+      ]);
+
+      // Insert BQ row. Streaming insert is fine for our volume.
+      const ipAddress =
+        (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() ||
+        req.socket.remoteAddress ||
+        null;
+      const userAgent = String(req.headers["user-agent"] || "").slice(0, 500) || null;
+
+      const row = buildBqRow({
+        entryId,
+        submittedAt,
+        payload,
+        gcsFolder: folder,
+        bankKeys,
+        pdfKey,
+        ipAddress,
+        userAgent,
+      });
+
+      await bqTable.insert([row], { raw: false, skipInvalidRows: false, ignoreUnknownValues: false });
+
+      const elapsedMs = Date.now() - reqStart;
+      console.log(
+        `[submit] entryId=${entryId} slug=${slug} banks=${bankFiles.length} pdf=${pdfFile ? 1 : 0} elapsed=${elapsedMs}ms`
+      );
+
+      return res.json({
+        ok: true,
+        entryId,
+        submittedAt,
+        gcsFolder: `gs://${BUCKET_NAME}/${folder}/`,
+        bankCount: bankFiles.length,
+        pdfStored: Boolean(pdfFile),
+      });
+    } catch (err) {
+      console.error("[submit] error:", err);
+      // Surface the BQ error details if they're there — super helpful for debugging.
+      const detail =
+        err?.errors?.[0]?.errors?.map((e) => e.message).join("; ") ||
+        err?.message ||
+        String(err);
+      return res.status(500).json({ ok: false, error: detail });
+    }
+  }
+);
+
+// ---------- Boot ----------
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`ndbf-backend listening on :${PORT}`);
+  console.log(`  project=${PROJECT_ID}`);
+  console.log(`  bucket=${BUCKET_NAME}`);
+  console.log(`  bq=${BQ_DATASET}.${BQ_TABLE}`);
+});

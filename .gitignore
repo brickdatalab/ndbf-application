@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+dist/
+dist-ssr/
+.pnp
+.pnp.js
+
+# TypeScript / Vite build cache
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+vite.config.js.timestamp-*.mjs
+.vite/
+
+# Local env files (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+.env.production.local
+.env.development.local
+
+# Vercel
+.vercel/
+
+# Editor & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Backend (server/) installs its own deps separately on the VM
+server/node_modules/
+server/.env

@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply font-body text-ink-body bg-surface-tint;
+    font-feature-settings: "cv11", "ss01";
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-display text-brand-navy;
+  }
+  /* Ensure native <select> keeps a visible box on focus (Parkview's CSS bug) */
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' viewBox='0 0 24 24' stroke='%23494F54' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1rem;
+    padding-right: 2.25rem;
+  }
+}
+
+@layer components {
+  .field-label {
+    @apply block text-sm font-medium text-brand-navy mb-1.5;
+  }
+  .field-required::after {
+    content: " *";
+    @apply text-red-500;
+  }
+  .field-input {
+    @apply w-full h-11 px-3.5 rounded-lg border border-divider-muted bg-white text-ink-body
+           placeholder:text-ink-muted/50
+           focus:outline-none focus:border-brand-blue focus:ring-4 focus:ring-brand-blue/15
+           transition-all duration-150
+           shadow-input;
+  }
+  .field-input[disabled] {
+    @apply bg-surface-offWhite cursor-not-allowed;
+  }
+  .field-help {
+    @apply text-xs text-ink-muted mt-1.5;
+  }
+  .field-error {
+    @apply text-xs text-red-500 mt-1.5 animate-fadeIn;
+  }
+}
+
+/* Signature canvas */
+.signature-canvas {
+  touch-action: none;
+  cursor: crosshair;
+}

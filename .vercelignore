@@ -1,0 +1,22 @@
+# Vercel only builds the Vite frontend at the repo root.
+# Keep these out of the build context — they're not part of the deploy.
+
+# Backend mirror (deployed to the GCP VM, not Vercel)
+server/
+
+# Documentation only (kept in the repo for reference, not needed at runtime)
+PRE-PROD-PLAN.md
+INFRA.md
+*.md
+!README.md
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Build artifacts (just in case)
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+vite.config.js.timestamp-*.mjs
