@@ -20,7 +20,7 @@ export function Layout({ children }: { children: ReactNode }) {
             />
           </a>
           <div className="hidden sm:flex items-center gap-2 text-white/80 text-sm font-body">
-            <span className="h-2 w-2 rounded-full bg-cta-orange shadow-[0_0_10px_rgba(255,102,0,0.9)]"></span>
+            <span className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.9)]"></span>
             Secure Application
           </div>
         </div>
