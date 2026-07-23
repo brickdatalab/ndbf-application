@@ -9,6 +9,15 @@ const FIELD_PARAMS: Record<string, keyof Pick<
   business_legal_name: "businessLegalName",
 };
 
+const URL_PREFILL_PARAMS = [
+  "first_name",
+  "last_name",
+  "full_name",
+  "email",
+  "phone",
+  "business_legal_name",
+] as const;
+
 export function getUrlPrefill(searchParams: URLSearchParams): Partial<FormData> {
   const prefill = Object.entries(FIELD_PARAMS).reduce<Partial<FormData>>((values, [param, field]) => {
     const value = searchParams.get(param)?.trim();
@@ -30,4 +39,10 @@ export function getUrlPrefill(searchParams: URLSearchParams): Partial<FormData> 
   if (phone) prefill.contactPhone = formatPhone(phone);
 
   return prefill;
+}
+
+export function removeUrlPrefillParams(searchParams: URLSearchParams): URLSearchParams {
+  const sanitizedParams = new URLSearchParams(searchParams);
+  URL_PREFILL_PARAMS.forEach((param) => sanitizedParams.delete(param));
+  return sanitizedParams;
 }

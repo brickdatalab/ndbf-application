@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 import { Layout } from "./components/Layout";
 import { Stepper } from "./components/Stepper";
 import { ContactInfo } from "./steps/ContactInfo";
@@ -8,9 +9,10 @@ import { BankStatements } from "./steps/BankStatements";
 import { SignSubmit } from "./steps/SignSubmit";
 import { Confirmation } from "./steps/Confirmation";
 import { useAppStore } from "./store";
-import { getUrlPrefill } from "./lib/prefill";
+import { getUrlPrefill, removeUrlPrefillParams } from "./lib/prefill";
 
 export default function App() {
+  const [speedInsightsReady, setSpeedInsightsReady] = useState(false);
   const currentStep = useAppStore((s) => s.currentStep);
   const isSubmitted = useAppStore((s) => s.isSubmitted);
   const setAppParam = useAppStore((s) => s.setAppParam);
@@ -33,6 +35,15 @@ export default function App() {
 
     const prefill = getUrlPrefill(params);
     if (Object.keys(prefill).length) updateFormData(prefill);
+
+    const sanitizedParams = removeUrlPrefillParams(params);
+    if (sanitizedParams.toString() !== params.toString()) {
+      const query = sanitizedParams.toString();
+      const sanitizedUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+      window.history.replaceState(window.history.state, "", sanitizedUrl);
+    }
+
+    setSpeedInsightsReady(true);
   }, [setAppParam, setUtm, updateFormData]);
 
   const step = (() => {
@@ -54,11 +65,14 @@ export default function App() {
   })();
 
   return (
-    <Layout>
-      {!isSubmitted && <Stepper />}
-      <div key={isSubmitted ? "confirmation" : currentStep} className="animate-fadeIn">
-        {step}
-      </div>
-    </Layout>
+    <>
+      <Layout>
+        {!isSubmitted && <Stepper />}
+        <div key={isSubmitted ? "confirmation" : currentStep} className="animate-fadeIn">
+          {step}
+        </div>
+      </Layout>
+      {speedInsightsReady && <SpeedInsights />}
+    </>
   );
 }

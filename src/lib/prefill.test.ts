@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getUrlPrefill } from "./prefill";
+import { getUrlPrefill, removeUrlPrefillParams } from "./prefill";
 
 describe("getUrlPrefill", () => {
   it("maps direct URL parameters to the application fields", () => {
@@ -40,5 +40,16 @@ describe("getUrlPrefill", () => {
       contactName: "Jim",
       contactPhone: "(555) 555-0100",
     });
+  });
+
+  it("removes PII prefill parameters while retaining attribution parameters", () => {
+    const params = new URLSearchParams(
+      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym"
+    );
+
+    expect(removeUrlPrefillParams(params).toString()).toBe(
+      "app=nicole&utm_source=mailgun&utm_campaign=july"
+    );
+    expect(params.has("email")).toBe(true);
   });
 });
