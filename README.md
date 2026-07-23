@@ -53,9 +53,29 @@ By default the local app submits to the production backend (`https://136-119-104
 
 Test rep-attribution: open `http://localhost:5173/?app=rep-vincent` — the `app` param flows into the BQ row.
 
+### Link attribution and prefill
+
+The application captures `app` and standard `utm_*` parameters for BigQuery attribution. It also maps these URL parameters into editable application fields on page load:
+
+| URL parameter | Application field |
+|---|---|
+| `first_name` + `last_name` | Full Name (preferred) |
+| `full_name` | Full Name (fallback) |
+| `email` | Email Address |
+| `phone` | Phone Number |
+| `business_legal_name` | Legal Business Name |
+
+Example:
+
+```text
+https://ndbf-application.vercel.app/?app=nicole&utm_source=mailgun&first_name=Jim&last_name=&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s%20Gym
+```
+
+`first_name` and `last_name` are trimmed and joined when either is present; `full_name` is used only when both are absent. Phone values use the same `(XXX) XXX-XXXX` format as manual entry. All populated values remain editable. Because URL parameters are visible in browser history and logs, do not include sensitive data beyond the approved prefill fields.
+
 ## Brand tokens
 
-Per `NextDayBizFunding-Brand-Style.md` (in the parent folder):
+The application uses these brand tokens:
 
 - Navy `#002140`, blues `#0075DF` / `#0057A8` / `#0F447A`, orange CTA `#FF6600`
 - Fonts: Inter (body), DM Sans (headings) — both loaded from Google Fonts in `index.html`
