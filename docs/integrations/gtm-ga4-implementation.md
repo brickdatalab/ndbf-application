@@ -129,18 +129,18 @@ not contain secrets, cookies, login information, or applicant data.
 ## 9. GTM published version
 
 - [x] Initial version name: `Initial GA4 and application funnel`
-- [x] Live correction version name:
-  `Initial GA4 and application funnel - tag ID correction`
-- [x] Version number: `3`
-- [x] Publication time: `2026-07-24 01:10 America/New_York`
+- [x] Live version name: `Final application event readiness`
+- [x] Version number: `5`
+- [x] Publication time: `2026-07-24 America/New_York`
 - [x] Prior version for rollback: Version 2 contains the original measurement-ID
   configuration; Version 1 is the `Empty Container` baseline.
 
 ## 10. Git commit
 
-- [ ] Commit message:
-- [ ] Commit hash:
-- [ ] Remote branch:
+- [x] Primary commit: `adb7200cd8719ece132f2e719d827c91b5dd2e82`
+  (`feat: add privacy-safe GTM and GA4 analytics`)
+- [x] Final deployed commit: `2dcf023415030118bd7c7acdcd12c2f99d9433ba`
+- [x] Remote branch: `origin/release/url-prefill-2026-07-23`
 
 ## 11. Vercel preview and production deployments
 
@@ -148,12 +148,13 @@ not contain secrets, cookies, login information, or applicant data.
   `dpl_5rTBmsH7Mx7XYpDnTUpMsQyKLezN`
 - [x] Preview URL:
   `https://ndbf-application-2m17vrnru-vincent-vitolos-projects.vercel.app`
-- [ ] Production deployment ID:
-- [ ] Production URL:
-- [ ] Canonical URL verified:
-- [ ] Prior production deployment for rollback:
-  Production was not changed; the existing production deployment remains the
-  rollback baseline.
+- [x] Production deployment ID:
+  `dpl_88XzCr7FSGwt8bUEiewGPEpCYdcV`
+- [x] Production deployment URL:
+  `https://ndbf-application-mm0pgj4tr-vincent-vitolos-projects.vercel.app`
+- [x] Canonical URL verified: `https://ndbf-application.vercel.app`
+- [x] Prior production rollback deployment:
+  `dpl_9n31SDb4KX5SSz5yyAQqs8BfND7p`
 
 ## 12. Verification checklist
 
@@ -191,9 +192,10 @@ not contain secrets, cookies, login information, or applicant data.
 - [x] Homepage Realtime verification is not applicable to the application-only scope.
 - [x] No production application was submitted for analytics testing.
 - [x] `generate_lead` mocked-success unit test passes.
-- [ ] Synthetic `generate_lead` through GTM Preview remains pending. A direct,
-  privacy-safe GA collection request returned HTTP 204 but did not appear in
-  DebugView or Realtime.
+- [x] Synthetic `generate_lead` was pushed through the published GTM container
+  without submitting an application; the GA collection endpoint returned 204.
+- [x] Canonical production page views and application-event batches reached
+  `www.google-analytics.com/g/collect` for `G-BSXPQ0QP2B` with HTTP 204.
 
 ## 13. Privacy verification
 
@@ -216,8 +218,11 @@ not contain secrets, cookies, login information, or applicant data.
   or Google configuration work.
 - [x] `BLOCKED-HOMEPAGE-TAG` is closed as not applicable after the owner narrowed
   scope to the Vercel application only.
-- [ ] `GA4-DATA-RECEIPT`: Final Realtime verification against the canonical
-  application domain remains pending production deployment.
+- [ ] `GA4-UI-PROPAGATION`: Canonical production requests are accepted by the
+  GA4 collection endpoint (HTTP 204), but Realtime, DebugView, Recent events,
+  and stream status still show no processed data in the newly created property.
+  Google-side processing must expose the received events before the UI can be
+  used to star `generate_lead` or complete event-filtered funnel steps.
 - [ ] `GA4-PROPAGATION`: Because GA4 has no received events, `generate_lead`
   cannot yet be starred as a key event and the exact funnel filters cannot be
   completed.
