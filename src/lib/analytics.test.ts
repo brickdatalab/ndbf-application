@@ -8,12 +8,22 @@ import {
 
 function analyticsHarness() {
   const dataLayer: Array<DataLayerEvent | GtmBootstrapEvent> = [];
-  const scripts: Array<{ id: string; src: string; async: boolean }> = [];
+  const scripts: Array<{
+    id: string;
+    src: string;
+    async: boolean;
+    onload?: () => void;
+  }> = [];
   const browser = {
     dataLayer,
     document: {
       getElementById: (id: string) => scripts.find((script) => script.id === id) ?? null,
-      createElement: () => ({ id: "", src: "", async: false }),
+      createElement: () => ({
+        id: "",
+        src: "",
+        async: false,
+        onload: undefined,
+      }),
       head: { appendChild: (script: (typeof scripts)[number]) => scripts.push(script) },
     },
   };
@@ -38,6 +48,13 @@ describe("analytics", () => {
         event: "gtm.js",
         "gtm.start": expect.any(Number),
       },
+    ]);
+    scripts[0].onload?.();
+    expect(dataLayer).toEqual([
+      {
+        event: "gtm.js",
+        "gtm.start": expect.any(Number),
+      },
       {
         event: "application_landing",
         app_param: "nicole",
@@ -49,14 +66,20 @@ describe("analytics", () => {
   });
 
   it("fires application_start only for the first meaningful interaction", () => {
-    const { browser, dataLayer } = analyticsHarness();
+    const { browser, dataLayer, scripts } = analyticsHarness();
     const analytics = createAnalytics(browser);
     analytics.setAttribution({ origin: "none", values: {} });
 
+    analytics.initialize();
     analytics.start();
     analytics.start();
+    scripts[0].onload?.();
 
-    expect(dataLayer.map(({ event }) => event)).toEqual(["application_start"]);
+    expect(dataLayer.map(({ event }) => event)).toEqual([
+      "gtm.js",
+      "application_landing",
+      "application_start",
+    ]);
   });
 
   it("emits generate_lead only after a successful backend result", async () => {

@@ -178,8 +178,8 @@ not contain secrets, cookies, login information, or applicant data.
 - [x] Expired and malformed storage is ignored by unit tests.
 - [x] Loader and one-time start behavior are idempotent in unit tests.
 - [x] Dynamic loader queues GTM's required `gtm.start` / `gtm.js` bootstrap,
-  then the sanitized landing event, before inserting the GTM script so the
-  Google tag initializes before replaying application events.
+  inserts the script only after URL sanitation, and emits the one-time landing
+  plus any immediately queued events after GTM's load signal so GA4 is ready.
 - [x] Tag Assistant shows `Google Tag - NDBF GA4` succeeding on Initialization
   before the application GA4 event tag fires.
 - [x] The published container loads `gtag.js` for Google tag `GT-TX9CMG82`,

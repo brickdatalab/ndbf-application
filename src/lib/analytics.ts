@@ -53,12 +53,14 @@ type AnalyticsBrowser = {
       id: string;
       src: string;
       async: boolean;
+      onload?: () => void;
     };
     head: {
       appendChild: (element: {
         id: string;
         src: string;
         async: boolean;
+        onload?: () => void;
       }) => unknown;
     };
   };
@@ -115,17 +117,28 @@ export function createAnalytics(browser: AnalyticsBrowser) {
   let attribution: AttributionResolution = { origin: "none", values: {} };
   let initialized = false;
   let started = false;
+  let ready = false;
+  const pending: DataLayerEvent[] = [];
+
+  const emit = (event: DataLayerEvent) => {
+    browser.dataLayer ??= [];
+    browser.dataLayer.push(event);
+  };
 
   const push = (
     event: ApplicationEventName,
     parameters: Partial<DataLayerEvent> = {}
   ) => {
-    browser.dataLayer ??= [];
-    browser.dataLayer.push({
+    const next = {
       event,
       ...attributionParameters(attribution),
       ...parameters,
-    });
+    };
+    if (!ready) {
+      pending.push(next);
+      return;
+    }
+    emit(next);
   };
 
   return {
@@ -143,13 +156,26 @@ export function createAnalytics(browser: AnalyticsBrowser) {
           event: "gtm.js",
         });
       }
-      push("application_landing");
       if (shouldLoadGtm) {
         const script = browser.document.createElement("script");
         script.id = GTM_SCRIPT_ID;
         script.async = true;
         script.src = `https://www.googletagmanager.com/gtm.js?id=${GTM_CONTAINER_ID}`;
+        script.onload = () => {
+          ready = true;
+          emit({
+            event: "application_landing",
+            ...attributionParameters(attribution),
+          });
+          pending.splice(0).forEach(emit);
+        };
         browser.document.head.appendChild(script);
+      } else {
+        ready = true;
+        emit({
+          event: "application_landing",
+          ...attributionParameters(attribution),
+        });
       }
     },
     push,
@@ -173,7 +199,12 @@ const browserWindow: AnalyticsBrowser =
         dataLayer: [],
         document: {
           getElementById: () => null,
-          createElement: () => ({ id: "", src: "", async: false }),
+          createElement: () => ({
+            id: "",
+            src: "",
+            async: false,
+            onload: undefined,
+          }),
           head: { appendChild: () => undefined },
         },
       }
