@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import { Layout } from "./components/Layout";
 import { Stepper } from "./components/Stepper";
@@ -10,6 +10,16 @@ import { SignSubmit } from "./steps/SignSubmit";
 import { Confirmation } from "./steps/Confirmation";
 import { useAppStore } from "./store";
 import { getUrlPrefill, removeUrlPrefillParams } from "./lib/prefill";
+import { resolveAttribution } from "./lib/attribution";
+import { analytics, type StepName } from "./lib/analytics";
+
+const STEP_NAMES: StepName[] = [
+  "contact_information",
+  "business_information",
+  "ownership_details",
+  "bank_statements",
+  "sign_and_submit",
+];
 
 export default function App() {
   const [speedInsightsReady, setSpeedInsightsReady] = useState(false);
@@ -18,18 +28,19 @@ export default function App() {
   const setAppParam = useAppStore((s) => s.setAppParam);
   const setUtm = useAppStore((s) => s.setUtm);
   const updateFormData = useAppStore((s) => s.updateFormData);
+  const viewedSteps = useRef(new Set<number>());
 
-  // Capture attribution and direct field-prefill parameters on mount.
+  // Resolve safe attribution before applying and removing PII-prefill parameters.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const app = params.get("app");
-    setAppParam(app);
+    const attribution = resolveAttribution(params, window.localStorage);
+    setAppParam(attribution.values.app ?? null);
     setUtm({
-      utm_source: params.get("utm_source"),
-      utm_medium: params.get("utm_medium"),
-      utm_campaign: params.get("utm_campaign"),
-      utm_term: params.get("utm_term"),
-      utm_content: params.get("utm_content"),
+      utm_source: attribution.values.utm_source ?? null,
+      utm_medium: attribution.values.utm_medium ?? null,
+      utm_campaign: attribution.values.utm_campaign ?? null,
+      utm_term: attribution.values.utm_term ?? null,
+      utm_content: attribution.values.utm_content ?? null,
       referrer: document.referrer || null,
     });
 
@@ -43,8 +54,35 @@ export default function App() {
       window.history.replaceState(window.history.state, "", sanitizedUrl);
     }
 
+    analytics.setAttribution(attribution);
+    analytics.initialize();
     setSpeedInsightsReady(true);
   }, [setAppParam, setUtm, updateFormData]);
+
+  useEffect(() => {
+    if (isSubmitted || viewedSteps.current.has(currentStep)) return;
+    const stepName = STEP_NAMES[currentStep];
+    if (!stepName) return;
+    viewedSteps.current.add(currentStep);
+    analytics.push("application_step_view", {
+      step_number: currentStep + 1,
+      step_name: stepName,
+    });
+  }, [currentStep, isSubmitted]);
+
+  useEffect(() => {
+    let wasHidden = false;
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        wasHidden = true;
+      } else if (wasHidden) {
+        wasHidden = false;
+        analytics.push("application_resume");
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   const step = (() => {
     if (isSubmitted) return <Confirmation />;
@@ -68,7 +106,12 @@ export default function App() {
     <>
       <Layout>
         {!isSubmitted && <Stepper />}
-        <div key={isSubmitted ? "confirmation" : currentStep} className="animate-fadeIn">
+        <div
+          key={isSubmitted ? "confirmation" : currentStep}
+          className="animate-fadeIn"
+          onChangeCapture={() => analytics.start()}
+          onInputCapture={() => analytics.start()}
+        >
           {step}
         </div>
       </Layout>

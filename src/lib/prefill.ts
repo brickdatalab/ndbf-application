@@ -16,6 +16,12 @@ const URL_PREFILL_PARAMS = [
   "email",
   "phone",
   "business_legal_name",
+  "prefill",
+  "contact_id",
+  "recipient_id",
+  "message_id",
+  "application_id",
+  "entry_id",
 ] as const;
 
 export function getUrlPrefill(searchParams: URLSearchParams): Partial<FormData> {

@@ -24,8 +24,8 @@ ndbf-application-demo/
 │   ├── components/             # Layout, Stepper, SignaturePad, AddressAutocomplete, FileUpload, etc.
 │   │   └── ui/                 # Button, Input, FormField primitives
 │   ├── steps/                  # ContactInfo, BusinessInfo, OwnershipDetails, BankStatements, SignSubmit, Confirmation
-│   ├── lib/                    # constants, terms (T&C clause), pdf generator, utils
-│   ├── store.ts                # Zustand store with localStorage persistence
+│   ├── lib/                    # analytics, attribution, prefill, PDF, constants, and utilities
+│   ├── store.ts                # Zustand store with per-tab sessionStorage persistence
 │   └── ...
 ├── server/                     # Backend mirror (deployed to VM, not Vercel)
 │   ├── server.js               # Express app
@@ -51,11 +51,20 @@ App runs at `http://localhost:5173`.
 
 By default the local app submits to the production backend (`https://136-119-104-124.nip.io`) — real submissions land in production BigQuery. To run against a different backend, copy `.env.example` to `.env.local` and edit `VITE_API_URL`.
 
-Test rep-attribution: open `http://localhost:5173/?app=rep-vincent` — the `app` param flows into the BQ row.
+Test rep-attribution: open `http://localhost:5173/?app=rep-vincent` — the `app`
+parameter flows into the submission payload and analytics.
 
 ### Link attribution and prefill
 
-The application captures `app` and standard `utm_*` parameters for BigQuery attribution. It also maps these URL parameters into editable application fields on page load:
+The application captures `app`, `utm_id`, `utm_source`, `utm_medium`,
+`utm_campaign`, `utm_content`, `utm_term`, and `utm_source_platform`. Safe
+attribution is retained for 30 days in `ndbf-attribution-v1`; a later bare
+application URL restores the latest non-expired values. Existing submission
+attribution remains limited to `app` plus the established standard UTM fields,
+while `utm_id` and `utm_source_platform` are analytics-only.
+
+The application also maps these URL parameters into editable application fields
+on page load:
 
 | URL parameter | Application field |
 |---|---|
@@ -71,7 +80,23 @@ Example:
 https://ndbf-application.vercel.app/?app=nicole&utm_source=mailgun&first_name=Jim&last_name=&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s%20Gym
 ```
 
-`first_name` and `last_name` are trimmed and joined when either is present; `full_name` is used only when both are absent. Phone values use the same `(XXX) XXX-XXXX` format as manual entry. All populated values remain editable. Because URL parameters are visible in browser history and logs, do not include sensitive data beyond the approved prefill fields.
+`first_name` and `last_name` are trimmed and joined when either is present;
+`full_name` is used only when both are absent. Phone values use the same
+`(XXX) XXX-XXXX` format as manual entry. All populated values remain editable.
+PII-prefill and recipient-level parameters are removed with
+`history.replaceState` before GTM loads.
+
+## Analytics
+
+The application dynamically loads GTM container `GTM-N9WZSDXR` only after URL
+prefill sanitation. The container sends privacy-safe application journey events
+to GA4 measurement ID `G-BSXPQ0QP2B`. Analytics events contain safe attribution,
+step numbers and controlled step/error categories only—never form values,
+application IDs, contact IDs, recipient IDs, message IDs, or backend responses.
+
+`generate_lead` is queued only after the submission API returns a successful
+response. Do not submit a production application to test analytics; use the
+mocked-success unit test and a synthetic GTM Preview event.
 
 ## Brand tokens
 

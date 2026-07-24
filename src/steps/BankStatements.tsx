@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Info } from "lucide-react";
 import { useAppStore } from "../store";
 import { FileUpload } from "../components/FileUpload";
 import { Button } from "../components/ui/Button";
+import { analytics } from "../lib/analytics";
 
 export function BankStatements() {
   const files = useAppStore((s) => s.formData.bankStatements);
@@ -13,6 +14,10 @@ export function BankStatements() {
 
   const handleSubmit = (ev: FormEvent) => {
     ev.preventDefault();
+    analytics.push("application_step_complete", {
+      step_number: 4,
+      step_name: "bank_statements",
+    });
     next();
   };
 

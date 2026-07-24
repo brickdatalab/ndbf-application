@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { analytics } from "../lib/analytics";
 
 export function Layout({ children }: { children: ReactNode }) {
   return (
@@ -11,6 +12,7 @@ export function Layout({ children }: { children: ReactNode }) {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="NextDay Biz Funding home"
+            onClick={() => analytics.push("homepage_link_click")}
             className="inline-flex items-center gap-3 rounded-md focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/40 transition-opacity hover:opacity-90"
           >
             <img

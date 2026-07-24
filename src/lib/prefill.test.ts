@@ -44,7 +44,7 @@ describe("getUrlPrefill", () => {
 
   it("removes PII prefill parameters while retaining attribution parameters", () => {
     const params = new URLSearchParams(
-      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym"
+      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym&prefill=secret&contact_id=1&recipient_id=2&message_id=3&application_id=4&entry_id=5"
     );
 
     expect(removeUrlPrefillParams(params).toString()).toBe(

@@ -7,6 +7,7 @@ import { Button } from "../components/ui/Button";
 import { DOBPicker } from "../components/DOBPicker";
 import { US_STATES } from "../lib/constants";
 import { formatSSN } from "../lib/utils";
+import { analytics } from "../lib/analytics";
 
 export function OwnershipDetails() {
   const owner = useAppStore((s) => s.formData.owner);
@@ -48,7 +49,19 @@ export function OwnershipDetails() {
 
   const handleSubmit = (ev: FormEvent) => {
     ev.preventDefault();
-    if (validate()) next();
+    if (validate()) {
+      analytics.push("application_step_complete", {
+        step_number: 3,
+        step_name: "ownership_details",
+      });
+      next();
+    } else {
+      analytics.push("application_validation_error", {
+        step_number: 3,
+        step_name: "ownership_details",
+        error_category: "invalid_ownership_details",
+      });
+    }
   };
 
   const updateOwnerAddress = (patch: Partial<typeof owner.address>) =>

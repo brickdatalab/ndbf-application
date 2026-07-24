@@ -16,6 +16,7 @@ import {
   formatEIN,
   formatUSD,
 } from "../lib/utils";
+import { analytics } from "../lib/analytics";
 
 export function BusinessInfo() {
   const f = useAppStore((s) => s.formData);
@@ -56,7 +57,19 @@ export function BusinessInfo() {
 
   const handleSubmit = (ev: FormEvent) => {
     ev.preventDefault();
-    if (validate()) next();
+    if (validate()) {
+      analytics.push("application_step_complete", {
+        step_number: 2,
+        step_name: "business_information",
+      });
+      next();
+    } else {
+      analytics.push("application_validation_error", {
+        step_number: 2,
+        step_name: "business_information",
+        error_category: "invalid_business_information",
+      });
+    }
   };
 
   return (

@@ -7,6 +7,11 @@ import { SignaturePad } from "../components/SignaturePad";
 import { TERMS_PARAGRAPHS } from "../lib/terms";
 import { generateApplicationPdf } from "../lib/pdf";
 import { shortId } from "../lib/utils";
+import {
+  analytics,
+  classifySubmissionError,
+  processSubmissionResponse,
+} from "../lib/analytics";
 
 export function SignSubmit() {
   const f = useAppStore((s) => s.formData);
@@ -25,10 +30,20 @@ export function SignSubmit() {
 
     if (!f.signature) {
       setErrMsg("Please provide your signature before submitting.");
+      analytics.push("application_validation_error", {
+        step_number: 5,
+        step_name: "sign_and_submit",
+        error_category: "missing_signature",
+      });
       return;
     }
     if (!f.termsAccepted) {
       setErrMsg("Please accept the terms and conditions before submitting.");
+      analytics.push("application_validation_error", {
+        step_number: 5,
+        step_name: "sign_and_submit",
+        error_category: "terms_not_accepted",
+      });
       return;
     }
 
@@ -81,25 +96,16 @@ export function SignSubmit() {
         (import.meta as unknown as { env?: Record<string, string> }).env
           ?.VITE_API_URL || "https://136-119-104-124.nip.io";
 
+      analytics.push("application_submit_attempt", {
+        step_number: 5,
+        step_name: "sign_and_submit",
+      });
       const resp = await fetch(`${apiBase}/api/submit`, {
         method: "POST",
         body: fd,
       });
 
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        throw new Error(`Backend ${resp.status}: ${text.slice(0, 200)}`);
-      }
-      const result = (await resp.json()) as {
-        ok: boolean;
-        entryId: string;
-        submittedAt: string;
-        gcsFolder: string;
-        error?: string;
-      };
-      if (!result.ok) {
-        throw new Error(result.error || "Unknown backend error");
-      }
+      const result = await processSubmissionResponse(resp);
 
       // 5. Open PDF preview in a new tab so the user sees exactly what got stored.
       const newTab = window.open("", "_blank");
@@ -115,11 +121,12 @@ export function SignSubmit() {
       markSubmitted(result.entryId, pdfDataUrl);
     } catch (err) {
       console.error(err);
-      setErrMsg(
-        err instanceof Error
-          ? `Submission failed: ${err.message}`
-          : "Submission failed. Please try again."
-      );
+      analytics.push("application_submit_error", {
+        step_number: 5,
+        step_name: "sign_and_submit",
+        error_category: classifySubmissionError(err),
+      });
+      setErrMsg("Submission failed. Please try again.");
       setSubmitting(false);
     }
   };

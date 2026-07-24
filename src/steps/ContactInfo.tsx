@@ -5,6 +5,7 @@ import { FormField } from "../components/ui/FormField";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { formatPhone, isValidEmail } from "../lib/utils";
+import { analytics } from "../lib/analytics";
 
 export function ContactInfo() {
   const { contactName, contactEmail, contactPhone } = useAppStore(
@@ -20,13 +21,32 @@ export function ContactInfo() {
     e.preventDefault();
     if (!isValidEmail(contactEmail)) {
       setTouched({ email: true });
+      analytics.push("application_validation_error", {
+        step_number: 1,
+        step_name: "contact_information",
+        error_category: "invalid_email",
+      });
       return;
     }
+    analytics.push("application_step_complete", {
+      step_number: 1,
+      step_name: "contact_information",
+    });
     next();
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 md:space-y-8">
+    <form
+      onSubmit={handleSubmit}
+      onInvalidCapture={() =>
+        analytics.push("application_validation_error", {
+          step_number: 1,
+          step_name: "contact_information",
+          error_category: "invalid_contact_information",
+        })
+      }
+      className="space-y-6 md:space-y-8"
+    >
       <header className="text-center space-y-2">
         <h2 className="font-display text-2xl md:text-3xl font-bold text-brand-navy">
           Primary Contact Information
