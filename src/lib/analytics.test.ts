@@ -33,7 +33,7 @@ function analyticsHarness() {
 describe("analytics", () => {
   it("loads GTM once and sends only defined safe attribution fields", () => {
     const { browser, dataLayer, scripts } = analyticsHarness();
-    const analytics = createAnalytics(browser);
+    const analytics = createAnalytics(browser, (callback) => callback());
     analytics.setAttribution({
       origin: "url",
       values: { app: "nicole", utm_source: "mailgun" },
@@ -67,7 +67,7 @@ describe("analytics", () => {
 
   it("fires application_start only for the first meaningful interaction", () => {
     const { browser, dataLayer, scripts } = analyticsHarness();
-    const analytics = createAnalytics(browser);
+    const analytics = createAnalytics(browser, (callback) => callback());
     analytics.setAttribution({ origin: "none", values: {} });
 
     analytics.initialize();

@@ -113,7 +113,12 @@ function attributionParameters(
   };
 }
 
-export function createAnalytics(browser: AnalyticsBrowser) {
+export function createAnalytics(
+  browser: AnalyticsBrowser,
+  scheduleReady: (callback: () => void) => void = (callback) => {
+    window.setTimeout(callback, 1000);
+  }
+) {
   let attribution: AttributionResolution = { origin: "none", values: {} };
   let initialized = false;
   let started = false;
@@ -162,12 +167,14 @@ export function createAnalytics(browser: AnalyticsBrowser) {
         script.async = true;
         script.src = `https://www.googletagmanager.com/gtm.js?id=${GTM_CONTAINER_ID}`;
         script.onload = () => {
-          ready = true;
-          emit({
-            event: "application_landing",
-            ...attributionParameters(attribution),
+          scheduleReady(() => {
+            ready = true;
+            emit({
+              event: "application_landing",
+              ...attributionParameters(attribution),
+            });
+            pending.splice(0).forEach(emit);
           });
-          pending.splice(0).forEach(emit);
         };
         browser.document.head.appendChild(script);
       } else {
