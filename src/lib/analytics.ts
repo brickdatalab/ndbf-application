@@ -40,8 +40,13 @@ export type DataLayerEvent = {
   error_category?: string;
 };
 
+export type GtmBootstrapEvent = {
+  "gtm.start": number;
+  event: "gtm.js";
+};
+
 type AnalyticsBrowser = {
-  dataLayer?: DataLayerEvent[];
+  dataLayer?: Array<DataLayerEvent | GtmBootstrapEvent>;
   document: {
     getElementById: (id: string) => unknown;
     createElement: (tag: string) => {
@@ -134,6 +139,10 @@ export function createAnalytics(browser: AnalyticsBrowser) {
       push("application_landing");
 
       if (!browser.document.getElementById(GTM_SCRIPT_ID)) {
+        browser.dataLayer.push({
+          "gtm.start": Date.now(),
+          event: "gtm.js",
+        });
         const script = browser.document.createElement("script");
         script.id = GTM_SCRIPT_ID;
         script.async = true;
@@ -152,7 +161,7 @@ export function createAnalytics(browser: AnalyticsBrowser) {
 
 declare global {
   interface Window {
-    dataLayer?: DataLayerEvent[];
+    dataLayer?: Array<DataLayerEvent | GtmBootstrapEvent>;
   }
 }
 

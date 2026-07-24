@@ -3,10 +3,11 @@ import {
   createAnalytics,
   processSubmissionResponse,
   type DataLayerEvent,
+  type GtmBootstrapEvent,
 } from "./analytics";
 
 function analyticsHarness() {
-  const dataLayer: DataLayerEvent[] = [];
+  const dataLayer: Array<DataLayerEvent | GtmBootstrapEvent> = [];
   const scripts: Array<{ id: string; src: string; async: boolean }> = [];
   const browser = {
     dataLayer,
@@ -38,6 +39,10 @@ describe("analytics", () => {
         app_param: "nicole",
         attribution_utm_source: "mailgun",
         attribution_origin: "url",
+      },
+      {
+        event: "gtm.js",
+        "gtm.start": expect.any(Number),
       },
     ]);
     expect(dataLayer[0]).not.toHaveProperty("attribution_utm_medium");
