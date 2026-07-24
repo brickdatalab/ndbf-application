@@ -136,13 +136,15 @@ export function createAnalytics(browser: AnalyticsBrowser) {
       if (initialized) return;
       initialized = true;
       browser.dataLayer ??= [];
-      push("application_landing");
-
-      if (!browser.document.getElementById(GTM_SCRIPT_ID)) {
+      const shouldLoadGtm = !browser.document.getElementById(GTM_SCRIPT_ID);
+      if (shouldLoadGtm) {
         browser.dataLayer.push({
           "gtm.start": Date.now(),
           event: "gtm.js",
         });
+      }
+      push("application_landing");
+      if (shouldLoadGtm) {
         const script = browser.document.createElement("script");
         script.id = GTM_SCRIPT_ID;
         script.async = true;

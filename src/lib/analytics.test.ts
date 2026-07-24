@@ -35,17 +35,17 @@ describe("analytics", () => {
     expect(scripts).toHaveLength(1);
     expect(dataLayer).toEqual([
       {
+        event: "gtm.js",
+        "gtm.start": expect.any(Number),
+      },
+      {
         event: "application_landing",
         app_param: "nicole",
         attribution_utm_source: "mailgun",
         attribution_origin: "url",
       },
-      {
-        event: "gtm.js",
-        "gtm.start": expect.any(Number),
-      },
     ]);
-    expect(dataLayer[0]).not.toHaveProperty("attribution_utm_medium");
+    expect(dataLayer[1]).not.toHaveProperty("attribution_utm_medium");
   });
 
   it("fires application_start only for the first meaningful interaction", () => {
