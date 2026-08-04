@@ -1,0 +1,17 @@
+{
+  "name": "ndbf-vectorizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Uploads application documents to the configured OpenAI vector store.",
+  "main": "worker.js",
+  "scripts": {
+    "start": "node worker.js",
+    "test": "node --test *.node-test.js"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^8.3.1",
+    "@google-cloud/pubsub": "^5.3.1",
+    "@google-cloud/storage": "^7.21.0"
+  }
+}

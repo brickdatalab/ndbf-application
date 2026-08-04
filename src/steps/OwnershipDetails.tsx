@@ -159,6 +159,7 @@ export function OwnershipDetails() {
             <DOBPicker
               value={owner.dateOfBirth}
               onChange={(iso) => updateOwner({ dateOfBirth: iso })}
+              maxYear={2010}
             />
           </FormField>
         </div>

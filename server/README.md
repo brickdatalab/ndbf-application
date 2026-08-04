@@ -25,7 +25,7 @@ On `POST /api/submit` the server:
 1. Generates a server-side `entry_id` (`ndbf_xxxxxxxx`).
 2. Slugifies the legal business name → folder key `{slug}_{entry_id}/`.
 3. Uploads the PDF and every bank statement to `gs://app_banks/{folder}/` in parallel.
-4. Inserts one row into `ndbf_applications.submissions` with all form fields, GCS paths, UTM/ref/IP/UA, and the full raw payload JSON.
+4. Inserts one row into `ndbf_applications.submissions` with all form fields, GCS paths, UTM/ref/IP/UA, and the raw payload JSON excluding only the duplicate base64 signature image. The signed PDF remains the authoritative signature artifact in GCS.
 5. Returns `{ ok, entryId, submittedAt, gcsFolder, bankCount, pdfStored }`.
 
 ## Local dev

@@ -212,10 +212,9 @@ not contain secrets, cookies, login information, or applicant data.
 
 ## 14. Blockers or incomplete work
 
-- [ ] `CHANGELOG-VECTOR-STORE`: The required OpenAI vector-store file
-  `file-CETqhRBzyNgSBDnc4GRHwK` cannot be updated because no vector-store file
-  retrieval/update tool is available in this session. This does not block application
-  or Google configuration work.
+- [x] `CHANGELOG-LOCAL`: The owner designated the root local `CHANGELOG.md` as
+  the only changelog source of truth. No vector-store synchronization is required,
+  and unavailable vector-store access is not a blocker.
 - [x] `BLOCKED-HOMEPAGE-TAG` is closed as not applicable after the owner narrowed
   scope to the Vercel application only.
 - [ ] `GA4-UI-PROPAGATION`: Canonical production requests are accepted by the
@@ -232,6 +231,7 @@ not contain secrets, cookies, login information, or applicant data.
 - [x] GTM rollback baseline: Version 1, `Empty Container`; Version 2 retains the
   initial application analytics configuration if the tag-ID correction must be
   reversed.
-- [x] Vercel rollback baseline: current production was not modified.
+- [x] Vercel rollback baseline: prior production deployment
+  `dpl_9n31SDb4KX5SSz5yyAQqs8BfND7p` remains available.
 - [x] Application rollback baseline: current production remains on `main` commit
   `bf0e7c2`.

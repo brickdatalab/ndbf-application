@@ -12,6 +12,7 @@ import multer from "multer";
 import { Storage } from "@google-cloud/storage";
 import { BigQuery } from "@google-cloud/bigquery";
 import { PubSub } from "@google-cloud/pubsub";
+import { serializeRawPayloadForBigQuery } from "./raw-payload.js";
 
 // ---------- Config ----------
 
@@ -180,7 +181,7 @@ function buildBqRow({ entryId, submittedAt, payload, gcsFolder, bankKeys, pdfKey
     signature_captured: Boolean(f.signature),
     terms_accepted: Boolean(f.termsAccepted),
 
-    raw_payload_json: JSON.stringify(payload),
+    raw_payload_json: serializeRawPayloadForBigQuery(payload),
   };
 }
 

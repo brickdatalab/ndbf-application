@@ -148,12 +148,25 @@ CREATE TABLE IF NOT EXISTS `lithe-hallway-493420-r4.ndbf_applications.submission
   signature_captured BOOL,
   terms_accepted BOOL,
 
-  -- Raw payload for schema-evolution safety
+  -- Raw payload for schema-evolution safety; excludes the duplicate base64
+  -- signature image, which remains embedded in the signed PDF stored in GCS.
   raw_payload_json STRING
 )
 PARTITION BY DATE(submitted_at)
 CLUSTER BY app_param, business_legal_name;
 ```
+
+### Future bank-statement vector index
+
+The independent `/opt/ndbf-vectorizer` worker consumes a new subscription on
+`submission-completed`. It uploads only bank-statement PDFs from future
+submissions to the configured OpenAI vector store, using 800-token chunks with
+400-token overlap. The generated application PDF is excluded.
+
+Each PDF has one lookup row in
+`ndbf_applications.submission_documents`, keyed by an opaque deterministic
+`document_id` and linked to the parent `entry_id`, GCS URI, OpenAI file ID, and
+indexing status. No historical documents are backfilled automatically.
 
 ## 7. Software stack on the VM
 
