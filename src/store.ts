@@ -62,7 +62,6 @@ type AppState = {
   isSubmitted: boolean;
   entryId: string | null;
   submittedAt: string | null;
-  pdfDataUrl: string | null;
   appParam: string | null;
   utm: UtmParams;
   formData: FormData;
@@ -77,7 +76,7 @@ type AppState = {
   removeBankStatement: (idx: number) => void;
   setAppParam: (v: string | null) => void;
   setUtm: (v: UtmParams) => void;
-  markSubmitted: (entryId: string, pdfDataUrl: string) => void;
+  markSubmitted: (entryId: string) => void;
   resetAll: () => void;
 };
 
@@ -123,7 +122,6 @@ export const useAppStore = create<AppState>()(
       isSubmitted: false,
       entryId: null,
       submittedAt: null,
-      pdfDataUrl: null,
       appParam: null,
       utm: {
         utm_source: null,
@@ -163,12 +161,11 @@ export const useAppStore = create<AppState>()(
         })),
       setAppParam: (v) => set({ appParam: v }),
       setUtm: (v) => set({ utm: v }),
-      markSubmitted: (entryId, pdfDataUrl) =>
+      markSubmitted: (entryId) =>
         set({
           isSubmitted: true,
           entryId,
           submittedAt: new Date().toISOString(),
-          pdfDataUrl,
         }),
       resetAll: () =>
         set({
@@ -176,7 +173,6 @@ export const useAppStore = create<AppState>()(
           isSubmitted: false,
           entryId: null,
           submittedAt: null,
-          pdfDataUrl: null,
           formData: initialFormData,
         }),
     }),

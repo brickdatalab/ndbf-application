@@ -107,18 +107,9 @@ export function SignSubmit() {
 
       const result = await processSubmissionResponse(resp);
 
-      // 5. Open PDF preview in a new tab so the user sees exactly what got stored.
-      const newTab = window.open("", "_blank");
-      if (newTab) {
-        newTab.document.write(
-          `<title>NDBF Application #${result.entryId}</title>
-           <iframe src="${pdfDataUrl}" style="border:0;width:100%;height:100vh;margin:0;padding:0"></iframe>
-           <style>body{margin:0;padding:0}</style>`
-        );
-        newTab.document.close();
-      }
-
-      markSubmitted(result.entryId, pdfDataUrl);
+      // 5. Transition directly to the confirmation page. The PDF remains stored
+      // in GCS and available to the email worker; applicants do not receive a preview tab.
+      markSubmitted(result.entryId);
     } catch (err) {
       console.error(err);
       analytics.push("application_submit_error", {

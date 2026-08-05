@@ -35,7 +35,7 @@ const C_RULE: [number, number, number] = [220, 220, 220];
  * Render a clean, Gravity-Forms-style PDF of the application.
  * Shows field label / field value. Redacts contact phone + email.
  * Includes the full Part 5 legal clause and the drawn signature image.
- * Returns a data URL the caller can open in a new tab.
+ * Returns a data URL for the multipart submission upload.
  */
 export async function generateApplicationPdf({
   entryId,
