@@ -11,6 +11,7 @@ export type PdfLayoutContract = Readonly<{
     heightMm: number;
   }>;
   anchor: string;
+  decodedLastPageContentSha256: string;
   rendering: Readonly<{
     label: Readonly<{
       text: string;

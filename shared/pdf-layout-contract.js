@@ -7,6 +7,7 @@ export const PDF_LAYOUT_CONTRACTS = Object.freeze({
     underwritingPage: Object.freeze({ position: "last" }),
     writableRect: Object.freeze({ xMm: 18, yMm: 38, widthMm: 174, heightMm: 236 }),
     anchor: "NDBF_PDF_LAYOUT|underwriting-v1|page=underwriting|rect=18,38,174,236",
+    decodedLastPageContentSha256: "7f6780285f894c62eeb1e8105ccebc51852834672ffaf69ca8b7dc547976b632",
     rendering: Object.freeze({
       label: Object.freeze({
         text: "BANK STATEMENT UNDERWRITING",

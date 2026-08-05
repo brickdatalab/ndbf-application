@@ -16,6 +16,10 @@ import {
   PDF_LAYOUT_VERSION,
   getPdfLayoutContract,
 } from "../../shared/pdf-layout-contract.js";
+import {
+  addUnderwritingSourcePage,
+  drawSourcePdfFooter,
+} from "../../shared/pdf-underwriting-page.js";
 
 type PdfArgs = {
   submittedAtIso: string;
@@ -84,22 +88,6 @@ export async function generateApplicationPdf({
     doc.setFontSize(13);
     doc.text("NextDay Biz Funding — Application", MARGIN_X, 9.5);
     y = 22;
-  };
-
-  const drawFooter = (pageNum: number, pageTotal: number) => {
-    const h = doc.internal.pageSize.getHeight();
-    doc.setDrawColor(...C_RULE);
-    doc.setLineWidth(0.2);
-    doc.line(MARGIN_X, h - 14, RIGHT, h - 14);
-    doc.setTextColor(...C_MUTED);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.text(
-      "NextDay Biz Funding  |  Confidential Application",
-      MARGIN_X,
-      h - 8
-    );
-    doc.text(`Page ${pageNum} of ${pageTotal}`, RIGHT, h - 8, { align: "right" });
   };
 
   const ensureSpace = (needed: number) => {
@@ -339,80 +327,13 @@ export async function generateApplicationPdf({
 
   // Dedicated versioned underwriting shell. It intentionally contains headings
   // only: the immutable signed source never carries provisional or fake values.
-  doc.addPage("a4", "portrait");
-  drawHeader();
-
-  const drawUnderwritingSection = (
-    title: string,
-    titleY: number,
-    columns: ReadonlyArray<{ label: string; x: number; align?: "left" | "center" | "right" }>,
-  ) => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(layout.rendering.sectionTitleFontSizePt);
-    doc.setTextColor(...C_NAVY);
-    doc.text(title, MARGIN_X, titleY);
-    doc.setDrawColor(...C_BLUE);
-    doc.setLineWidth(layout.rendering.titleRuleWidthMm);
-    doc.line(
-      MARGIN_X,
-      titleY + layout.rendering.titleRuleOffsetMm,
-      RIGHT,
-      titleY + layout.rendering.titleRuleOffsetMm,
-    );
-
-    doc.setFontSize(layout.rendering.columnFontSizePt);
-    doc.setTextColor(...C_MUTED);
-    for (const column of columns) {
-      const lines = column.label.split("\n");
-      doc.text(lines, column.x, titleY + layout.rendering.columnYOffsetMm, {
-        align: column.align ?? "left",
-        lineHeightFactor: layout.rendering.columnLineHeightFactor,
-      });
-    }
-    doc.setDrawColor(...C_RULE);
-    doc.setLineWidth(layout.rendering.columnRuleWidthMm);
-    doc.line(
-      MARGIN_X,
-      titleY + layout.rendering.columnRuleOffsetMm,
-      RIGHT,
-      titleY + layout.rendering.columnRuleOffsetMm,
-    );
-  };
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(layout.rendering.label.fontSizePt);
-  doc.setTextColor(...C_BLUE);
-  doc.text(
-    layout.rendering.label.text,
-    layout.rendering.label.xMm,
-    layout.rendering.label.yMm,
-  );
-
-  for (const section of layout.sections) {
-    drawUnderwritingSection(
-      section.title,
-      section.titleYMm,
-      section.columns.map((column) => ({
-        label: column.label,
-        x: column.xMm,
-        align: column.align,
-      })),
-    );
-  }
-
-  // Machine-readable, visually hidden anchor. PDF text rendering mode 3 is
-  // intrinsically invisible and is validated at the exact contract coordinate.
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(layout.rendering.anchorFontSizePt);
-  doc.text(layout.anchor, layout.writableRect.xMm, layout.writableRect.yMm, {
-    renderingMode: "invisible",
-  });
+  addUnderwritingSourcePage(doc, layout);
 
   // Footer on every page
   const pageTotal = doc.getNumberOfPages();
   for (let i = 1; i <= pageTotal; i++) {
     doc.setPage(i);
-    drawFooter(i, pageTotal);
+    drawSourcePdfFooter(doc, i, pageTotal);
   }
 
   return doc.output("datauristring");

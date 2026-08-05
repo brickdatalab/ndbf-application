@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import type { FormData } from "../store";
 import { PDF_LAYOUT_VERSION, getPdfLayoutContract } from "../../shared/pdf-layout-contract.js";
 import { generateApplicationPdf } from "./pdf";
+import { fingerprintDecodedUnderwritingPageContent } from "../../server/pdf-layout-fingerprint.js";
+import { validateDeclaredPdfLayout } from "../../server/pdf-layout-validator.js";
 
 const formData: FormData = {
   contactName: "Synthetic Applicant",
@@ -32,22 +33,23 @@ const formData: FormData = {
   termsAccepted: true,
 };
 
-function decodePdf(dataUri: string) {
+function decodePdfBuffer(dataUri: string) {
   const encoded = dataUri.slice(dataUri.indexOf(",") + 1);
-  return Buffer.from(encoded, "base64").toString("latin1");
+  return Buffer.from(encoded, "base64");
 }
 
 describe("underwriting-v1 signed source PDF", () => {
   it("adds an A4, transparent, blank underwriting shell with metadata and anchor", async () => {
     const contract = getPdfLayoutContract(PDF_LAYOUT_VERSION);
     expect(contract).not.toBeNull();
-    const raw = decodePdf(
+    const pdfBuffer = decodePdfBuffer(
       await generateApplicationPdf({
         submittedAtIso: "2026-08-05T12:00:00.000Z",
         appParam: "synthetic",
         formData,
       }),
     );
+    const raw = pdfBuffer.toString("latin1");
 
     expect((raw.match(/\/Type \/Page\n/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(raw.match(/\/MediaBox \[0 0 595\.\d+ 841\.\d+\]/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
@@ -64,12 +66,15 @@ describe("underwriting-v1 signed source PDF", () => {
     const pageStreams = [...raw.matchAll(/\nstream\n([\s\S]*?)\nendstream/g)];
     const lastPageStream = pageStreams.at(-1)?.[1] ?? "";
     expect(lastPageStream).toContain("(nextdaybizfunding) Tj");
-    const generatorSource = readFileSync(new URL("./pdf.ts", import.meta.url), "utf8");
-    const sectionRenderer = generatorSource.split("const drawUnderwritingSection")[1]?.split(
-      'doc.text("BANK STATEMENT UNDERWRITING"',
-    )[0];
-    expect(sectionRenderer).not.toContain("setFillColor");
-    expect(sectionRenderer).not.toContain(".rect(");
     expect(lastPageStream).not.toMatch(/\$\d/);
+    expect(fingerprintDecodedUnderwritingPageContent(lastPageStream, 2)).toBe(
+      contract?.decodedLastPageContentSha256,
+    );
+    await expect(
+      validateDeclaredPdfLayout({
+        declaredVersion: PDF_LAYOUT_VERSION,
+        pdfBuffer,
+      }),
+    ).resolves.toBe(PDF_LAYOUT_VERSION);
   });
 });
