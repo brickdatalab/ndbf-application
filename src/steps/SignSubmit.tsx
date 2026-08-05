@@ -6,7 +6,7 @@ import { Checkbox } from "../components/ui/Input";
 import { SignaturePad } from "../components/SignaturePad";
 import { TERMS_PARAGRAPHS } from "../lib/terms";
 import { generateApplicationPdf } from "../lib/pdf";
-import { shortId } from "../lib/utils";
+import { PDF_LAYOUT_VERSION } from "../../shared/pdf-layout-contract.js";
 import {
   analytics,
   classifySubmissionError,
@@ -49,14 +49,12 @@ export function SignSubmit() {
 
     setSubmitting(true);
 
-    // Client-side entry ID is a hint; the server assigns the real one.
-    const clientEntryIdHint = `ndbf_${shortId(8)}`;
     const submittedAtClient = new Date().toISOString();
 
     // Build the payload the backend will write to BigQuery.
     const payload = {
-      clientEntryIdHint,
       clientSubmittedAt: submittedAtClient,
+      pdfLayoutVersion: PDF_LAYOUT_VERSION,
       appParam,
       utm,
       formData: {
@@ -73,7 +71,6 @@ export function SignSubmit() {
     try {
       // 1. Generate the PDF client-side (same document the backend will store).
       const pdfDataUrl = await generateApplicationPdf({
-        entryId: clientEntryIdHint,
         submittedAtIso: submittedAtClient,
         appParam,
         formData: f,
@@ -85,7 +82,7 @@ export function SignSubmit() {
       // 3. Build the multipart request.
       const fd = new FormData();
       fd.append("payload", JSON.stringify(payload));
-      fd.append("pdf", pdfBlob, `${clientEntryIdHint}.pdf`);
+      fd.append("pdf", pdfBlob, "signed-application.pdf");
       for (const file of f.bankStatements) {
         fd.append("banks", file, file.name);
       }

@@ -13,6 +13,12 @@ import { Storage } from "@google-cloud/storage";
 import { BigQuery } from "@google-cloud/bigquery";
 import { PubSub } from "@google-cloud/pubsub";
 import { serializeRawPayloadForBigQuery } from "./raw-payload.js";
+import {
+  PdfLayoutValidationError,
+  validateDeclaredPdfLayout,
+} from "./pdf-layout-validator.js";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 // ---------- Config ----------
 
@@ -124,7 +130,7 @@ function mapSalesBucket(b) {
 }
 
 // Map the client payload to a BigQuery row matching the submissions schema.
-function buildBqRow({ entryId, submittedAt, payload, gcsFolder, bankKeys, pdfKey, ipAddress, userAgent }) {
+export function buildBqRow({ entryId, submittedAt, payload, pdfLayoutVersion, gcsFolder, bankKeys, pdfKey, ipAddress, userAgent }) {
   const f = payload.formData || {};
   const owner = f.owner || {};
   const addr = f.physicalAddress || {};
@@ -176,6 +182,7 @@ function buildBqRow({ entryId, submittedAt, payload, gcsFolder, bankKeys, pdfKey
 
     bank_statement_gcs_keys: bankKeys,
     pdf_gcs_key: pdfKey || null,
+    pdf_layout_version: pdfLayoutVersion,
     gcs_folder: `gs://${BUCKET_NAME}/${gcsFolder}`,
 
     signature_captured: Boolean(f.signature),
@@ -208,13 +215,13 @@ app.get("/", (_req, res) => {
 //   - payload    : JSON string  (form data, utm, appParam)
 //   - pdf        : File         (client-generated application PDF) [optional]
 //   - banks      : File(s)      (uploaded bank statements, up to MAX_FILES)
-app.post(
-  "/api/submit",
-  upload.fields([
-    { name: "pdf", maxCount: 1 },
-    { name: "banks", maxCount: MAX_FILES },
-  ]),
-  async (req, res) => {
+export function createSubmitHandler({
+  uploadFile = uploadToGcs,
+  insertRows = (rows, options) => bqTable.insert(rows, options),
+  publishMessage = (message) => notifyTopic.publishMessage(message),
+  now = iso,
+} = {}) {
+  return async (req, res) => {
     const reqStart = Date.now();
     try {
       const raw = req.body?.payload;
@@ -228,14 +235,28 @@ app.post(
         return res.status(400).json({ ok: false, error: "Invalid JSON in payload" });
       }
 
+      const pdfFile = (req.files?.pdf || [])[0];
+      const bankFiles = req.files?.banks || [];
+      let pdfLayoutVersion;
+      try {
+        pdfLayoutVersion = await validateDeclaredPdfLayout({
+          declaredVersion: payload.pdfLayoutVersion,
+          pdfBuffer: pdfFile?.buffer,
+        });
+      } catch (error) {
+        if (error instanceof PdfLayoutValidationError) {
+          return res.status(error.statusCode).json({ ok: false, error: error.code });
+        }
+        throw error;
+      }
+
       const entryId = `ndbf_${shortId(8)}`;
-      const submittedAt = iso();
+      const submittedAt = now();
       const slug = slugify(payload?.formData?.businessLegalName || "unknown");
       const folder = `${slug}_${entryId}`;
 
-      // Upload bank statements + PDF to GCS in parallel.
-      const pdfFile = (req.files?.pdf || [])[0];
-      const bankFiles = req.files?.banks || [];
+      // Validation is complete before this persistence boundary. Upload bank
+      // statements and the signed source PDF only after the layout is trusted.
 
       const uploadPromises = [];
 
@@ -243,7 +264,7 @@ app.post(
         const f = bankFiles[i];
         const safe = String(f.originalname || `statement_${i + 1}`).replace(/[^\w.\- ]+/g, "_");
         uploadPromises.push(
-          uploadToGcs({
+          uploadFile({
             folder,
             filename: `bank_${String(i + 1).padStart(2, "0")}_${safe}`,
             buffer: f.buffer,
@@ -254,7 +275,7 @@ app.post(
 
       let pdfPromise = null;
       if (pdfFile) {
-        pdfPromise = uploadToGcs({
+        pdfPromise = uploadFile({
           folder,
           filename: `${slug}_${entryId}.pdf`,
           buffer: pdfFile.buffer,
@@ -278,6 +299,7 @@ app.post(
         entryId,
         submittedAt,
         payload,
+        pdfLayoutVersion,
         gcsFolder: folder,
         bankKeys,
         pdfKey,
@@ -285,15 +307,19 @@ app.post(
         userAgent,
       });
 
-      await bqTable.insert([row], { raw: false, skipInvalidRows: false, ignoreUnknownValues: false });
+      await insertRows([row], { raw: false, skipInvalidRows: false, ignoreUnknownValues: false });
 
       // Fire-and-forget notification to the email worker. Wrapped in try/catch
       // and bounded by a 2s timeout so a Pub/Sub blip never affects the
       // applicant's submit response. The submission is already persisted at
       // this point — the notification is purely out-of-band.
       try {
-        const publishPromise = notifyTopic.publishMessage({
-          json: { entry_id: entryId, gcs_folder: `gs://${BUCKET_NAME}/${folder}` },
+        const publishPromise = publishMessage({
+          json: {
+            entry_id: entryId,
+            gcs_folder: `gs://${BUCKET_NAME}/${folder}`,
+            pdf_layout_version: pdfLayoutVersion,
+          },
           attributes: { entry_id: entryId },
         });
         await Promise.race([
@@ -326,14 +352,27 @@ app.post(
         String(err);
       return res.status(500).json({ ok: false, error: detail });
     }
-  }
+  };
+}
+
+app.post(
+  "/api/submit",
+  upload.fields([
+    { name: "pdf", maxCount: 1 },
+    { name: "banks", maxCount: MAX_FILES },
+  ]),
+  createSubmitHandler(),
 );
 
 // ---------- Boot ----------
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`ndbf-backend listening on :${PORT}`);
-  console.log(`  project=${PROJECT_ID}`);
-  console.log(`  bucket=${BUCKET_NAME}`);
-  console.log(`  bq=${BQ_DATASET}.${BQ_TABLE}`);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`ndbf-backend listening on :${PORT}`);
+    console.log(`  project=${PROJECT_ID}`);
+    console.log(`  bucket=${BUCKET_NAME}`);
+    console.log(`  bq=${BQ_DATASET}.${BQ_TABLE}`);
+  });
+}
+
+export { app };

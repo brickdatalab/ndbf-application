@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test raw-payload.node-test.js"
+    "test": "node --test *.node-test.js"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.4",
@@ -16,6 +16,7 @@
     "@google-cloud/storage": "^7.13.0",
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "pdf-lib": "^1.17.1"
   }
 }

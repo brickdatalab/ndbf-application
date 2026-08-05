@@ -12,9 +12,12 @@ import {
   redactPhone,
   salesBucketLabel,
 } from "./utils";
+import {
+  PDF_LAYOUT_VERSION,
+  getPdfLayoutContract,
+} from "../../shared/pdf-layout-contract.js";
 
 type PdfArgs = {
-  entryId: string;
   submittedAtIso: string;
   appParam: string | null;
   formData: FormData;
@@ -38,12 +41,14 @@ const C_RULE: [number, number, number] = [220, 220, 220];
  * Returns a data URL for the multipart submission upload.
  */
 export async function generateApplicationPdf({
-  entryId,
   submittedAtIso,
   appParam,
   formData,
 }: PdfArgs): Promise<string> {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const layout = getPdfLayoutContract(PDF_LAYOUT_VERSION);
+  if (!layout) throw new Error(`Missing PDF layout contract: ${PDF_LAYOUT_VERSION}`);
+  doc.setProperties(layout.metadata);
   let y = 18;
 
   // Diagonal "nextdaybizfunding" watermark drawn first on every page so it sits
@@ -78,9 +83,6 @@ export async function generateApplicationPdf({
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
     doc.text("NextDay Biz Funding — Application", MARGIN_X, 9.5);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.text(`Entry #${entryId}`, RIGHT, 9.5, { align: "right" });
     y = 22;
   };
 
@@ -334,6 +336,66 @@ export async function generateApplicationPdf({
   doc.text(formData.owner.fullName || formData.contactName || "—", RIGHT - 50, y + 25);
 
   y += 30;
+
+  // Dedicated versioned underwriting shell. It intentionally contains headings
+  // only: the immutable signed source never carries provisional or fake values.
+  doc.addPage("a4", "portrait");
+  drawHeader();
+
+  const drawUnderwritingSection = (
+    title: string,
+    titleY: number,
+    columns: ReadonlyArray<{ label: string; x: number; align?: "left" | "center" | "right" }>,
+  ) => {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.setTextColor(...C_NAVY);
+    doc.text(title, MARGIN_X, titleY);
+    doc.setDrawColor(...C_BLUE);
+    doc.setLineWidth(0.35);
+    doc.line(MARGIN_X, titleY + 2.5, RIGHT, titleY + 2.5);
+
+    doc.setFontSize(5.2);
+    doc.setTextColor(...C_MUTED);
+    for (const column of columns) {
+      const lines = column.label.split("\n");
+      doc.text(lines, column.x, titleY + 8, {
+        align: column.align ?? "left",
+        lineHeightFactor: 1.05,
+      });
+    }
+    doc.setDrawColor(...C_RULE);
+    doc.setLineWidth(0.16);
+    doc.line(MARGIN_X, titleY + 13, RIGHT, titleY + 13);
+  };
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.2);
+  doc.setTextColor(...C_BLUE);
+  doc.text("BANK STATEMENT UNDERWRITING", MARGIN_X, 27);
+
+  for (const section of layout.sections) {
+    drawUnderwritingSection(
+      section.title,
+      section.titleYMm,
+      section.columns.map((column) => ({
+        label: column.label,
+        x: column.xMm,
+        align: column.align,
+      })),
+    );
+  }
+
+  // Machine-readable, visually hidden anchor. The exact version and writable
+  // rectangle come from the shared contract and are validated before storage.
+  doc.saveGraphicsState();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const GState = (doc as any).GState;
+  if (GState) doc.setGState(new GState({ opacity: 0 }));
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(1);
+  doc.text(layout.anchor, layout.writableRect.xMm, layout.writableRect.yMm);
+  doc.restoreGraphicsState();
 
   // Footer on every page
   const pageTotal = doc.getNumberOfPages();
