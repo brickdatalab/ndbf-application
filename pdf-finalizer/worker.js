@@ -7,6 +7,7 @@ import { renderFinalizedPdf, verifyFinalizedPdf } from "./renderer.js";
 import { validateDeclaredPdfLayout } from "@ndbf/pdf-layout/pdf-layout-validator.js";
 
 const PROJECT_ID = process.env.PROJECT_ID || "lithe-hallway-493420-r4";
+const BQ_DATASET = process.env.BQ_DATASET || "ndbf_applications";
 const BUCKET_NAME = process.env.BUCKET_NAME || "app_banks";
 const SUBSCRIPTION =
   process.env.PDF_FINALIZER_SUBSCRIPTION ||
@@ -18,6 +19,7 @@ export function buildWorker({ adapters, logger = console } = {}) {
     adapters ??
     createProductionAdapters({
       projectId: PROJECT_ID,
+      datasetId: BQ_DATASET,
       bucketName: BUCKET_NAME,
       readyTopicName: READY_TOPIC,
     });

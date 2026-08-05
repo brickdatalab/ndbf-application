@@ -2,7 +2,30 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { PubSub } from "@google-cloud/pubsub";
 import { Storage } from "@google-cloud/storage";
 
-export const SUMMARY_QUERY = `
+const PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+const DATASET_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/;
+
+function requireIdentifier(value, pattern, code) {
+  const identifier = String(value ?? "");
+  if (!pattern.test(identifier)) throw new Error(code);
+  return identifier;
+}
+
+export function buildSummaryQuery({
+  projectId = "lithe-hallway-493420-r4",
+  datasetId = "ndbf_applications",
+} = {}) {
+  const project = requireIdentifier(
+    projectId,
+    PROJECT_ID_PATTERN,
+    "BIGQUERY_PROJECT_ID_INVALID",
+  );
+  const dataset = requireIdentifier(
+    datasetId,
+    DATASET_ID_PATTERN,
+    "BIGQUERY_DATASET_ID_INVALID",
+  );
+  return `
   SELECT
     summary.entry_id,
     summary.analysis_version,
@@ -18,11 +41,14 @@ export const SUMMARY_QUERY = `
     source.pdf_layout_version,
     source.pdf_source_generation,
     source.pdf_source_sha256
-  FROM \`lithe-hallway-493420-r4.ndbf_applications.application_pdf_underwriting_summary\` AS summary
-  JOIN \`lithe-hallway-493420-r4.ndbf_applications.submissions\` AS source
+  FROM \`${project}.${dataset}.application_pdf_underwriting_summary\` AS summary
+  JOIN \`${project}.${dataset}.submissions\` AS source
     USING (entry_id)
   WHERE summary.entry_id = @entry_id
 `;
+}
+
+export const SUMMARY_QUERY = buildSummaryQuery();
 
 function parseGsUri(uri, expectedBucket) {
   const match = String(uri ?? "").match(/^gs:\/\/([^/]+)\/(.+)$/);
@@ -42,19 +68,21 @@ function customMetadata(metadata) {
 
 export function createProductionAdapters({
   projectId = "lithe-hallway-493420-r4",
+  datasetId = "ndbf_applications",
   bucketName = "app_banks",
   readyTopicName = "application-pdf-ready",
   bigquery = new BigQuery({ projectId }),
   storage = new Storage({ projectId }),
   pubsub = new PubSub({ projectId }),
 } = {}) {
+  const summaryQuery = buildSummaryQuery({ projectId, datasetId });
   const bucket = storage.bucket(bucketName);
   const readyTopic = pubsub.topic(readyTopicName);
 
   return {
     async queryRows(entryId) {
       const [rows] = await bigquery.query({
-        query: SUMMARY_QUERY,
+        query: summaryQuery,
         params: { entry_id: entryId },
         types: { entry_id: "STRING" },
         useLegacySql: false,

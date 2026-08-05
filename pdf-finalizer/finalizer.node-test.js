@@ -81,6 +81,8 @@ test("strictly validates events while acknowledging irrelevant legacy events", (
 test("queries the joined read model once with an entry_id parameter", async () => {
   let queryOptions;
   const adapters = createProductionAdapters({
+    projectId: "sandbox-project",
+    datasetId: "ndbf_pdf_test_20260805",
     bigquery: {
       query: async (options) => {
         queryOptions = options;
@@ -96,6 +98,30 @@ test("queries the joined read model once with an entry_id parameter", async () =
   assert.equal(queryOptions.types.entry_id, "STRING");
   assert.match(queryOptions.query, /@entry_id/);
   assert.doesNotMatch(queryOptions.query, new RegExp(ENTRY_ID));
+  assert.match(
+    queryOptions.query,
+    /`sandbox-project\.ndbf_pdf_test_20260805\.application_pdf_underwriting_summary`/,
+  );
+  assert.match(
+    queryOptions.query,
+    /`sandbox-project\.ndbf_pdf_test_20260805\.submissions`/,
+  );
+  assert.doesNotMatch(queryOptions.query, /lithe-hallway-493420-r4/);
+
+  for (const invalid of [
+    { projectId: "bad`project", datasetId: "safe_dataset" },
+    { projectId: "sandbox-project", datasetId: "bad.dataset" },
+  ]) {
+    assert.throws(
+      () => createProductionAdapters({
+        ...invalid,
+        bigquery: { query: async () => [[]] },
+        storage: { bucket: () => ({}) },
+        pubsub: { topic: () => ({}) },
+      }),
+      /BIGQUERY_(PROJECT|DATASET)_ID_INVALID/,
+    );
+  }
 });
 
 test("requires one unique statement binding per expected document", () => {

@@ -184,6 +184,59 @@ Downstream consumers deduplicate with its stable `event_key`; the retained
 relay consumer is connected. The agent posting contract and table ID are
 documented in `vectorizer/BANK_STATEMENT_EXTRACTION_CONTRACT.md`.
 
+### Underwritten application PDF finalizer
+
+The finalizer consumes the existing `bank-statement-underwriting-ready` topic
+through one dedicated subscription, writes an immutable populated application
+PDF, and publishes a privacy-safe completion event. These commands describe the
+required resources; run them only during an authorized production rollout:
+
+```bash
+gcloud pubsub topics create application-pdf-ready
+gcloud pubsub subscriptions create bank-statement-underwriting-pdf-finalizer \
+  --topic=bank-statement-underwriting-ready \
+  --ack-deadline=600 \
+  --message-retention-duration=7d \
+  --expiration-period=never
+gcloud pubsub subscriptions create application-pdf-ready-monitor \
+  --topic=application-pdf-ready \
+  --ack-deadline=60 \
+  --message-retention-duration=7d \
+  --expiration-period=never
+```
+
+There is deliberately no PDF-ready email subscription. The existing
+`submission-completed-emailer` subscription remains the only email owner and
+polls for the immutable final artifact until its fixed deadline.
+
+Deploy the self-contained finalizer to a timestamped release, atomically repoint
+`/opt/ndbf-pdf-finalizer`, then start it under PM2:
+
+```bash
+mkdir -p /opt/ndbf-pdf-finalizer-releases
+release_dir="$(mktemp -d /opt/ndbf-pdf-finalizer-releases/release.XXXXXX)"
+rsync -aL --delete --exclude node_modules ./pdf-finalizer/ "$release_dir/"
+(cd "$release_dir" && npm ci --omit=dev)
+ln -sfn "$release_dir" /opt/ndbf-pdf-finalizer.next
+mv -Tf /opt/ndbf-pdf-finalizer.next /opt/ndbf-pdf-finalizer
+cd /opt/ndbf-pdf-finalizer
+pm2 start worker.js --name ndbf-pdf-finalizer --time
+pm2 save
+```
+
+Production defaults are project `lithe-hallway-493420-r4`, dataset
+`ndbf_applications`, bucket `app_banks`, input subscription
+`bank-statement-underwriting-pdf-finalizer`, and output topic
+`application-pdf-ready`. Temporary isolated resources use the same worker by
+overriding `PROJECT_ID`, `BQ_DATASET`, `BUCKET_NAME`,
+`PDF_FINALIZER_SUBSCRIPTION`, and `PDF_READY_TOPIC`; the BigQuery lookup remains
+parameterized by `entry_id`.
+
+Rollback repoints `/opt/ndbf-pdf-finalizer` to the retained prior release and
+restarts only `ndbf-pdf-finalizer`. If resource rollback is explicitly required,
+delete only the two finalizer-created subscriptions and `application-pdf-ready`;
+never delete the pre-existing underwriting-ready topic or email subscription.
+
 ## 7. Software stack on the VM
 
 Pre-installed (ships with GCE Debian image):

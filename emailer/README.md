@@ -34,6 +34,11 @@ Pub/Sub retries up to 5 times with exponential backoff on `nack`. After 5 failur
 
 The original `submission-completed-emailer` message is the sole owner of delivery. Its ACK deadline is extended for at most ten minutes, and it is acknowledged only after SMTP accepts the message. A finalized PDF created after a timeout is retained in GCS and never triggers a second email.
 
+`application-pdf-ready` is an observability event, not an email trigger. Its
+`application-pdf-ready-monitor` subscription must never be handled by this
+worker, and no second email subscription may be created. This preserves one
+send owner and makes a late finalization incapable of sending a duplicate.
+
 ## Environment variables (set in `pm2` ecosystem file or via systemd env)
 
 | Var | Required | Default |
@@ -60,6 +65,23 @@ scp -i ~/.ssh/approval-dept emailer/worker.js emailer/delivery-gate.js \
 
 ssh -i ~/.ssh/approval-dept vitolo@136.119.104.124 \
     "cd /opt/ndbf-emailer && npm install --omit=dev && pm2 restart ndbf-emailer"
+```
+
+For an atomic deployment, copy into a timestamped release directory, repoint
+`/opt/ndbf-emailer`, restart only `ndbf-emailer`, and retain the prior target.
+Rollback repoints that symlink to the retained release and runs:
+
+```bash
+pm2 restart ndbf-emailer --update-env
+pm2 save
+```
+
+The repository's accelerated fallback proof replaces SMTP with an in-memory
+boundary:
+
+```bash
+cd /path/to/ndbf-application-demo
+npm run test:pdf-pipeline
 ```
 
 ## Test it
