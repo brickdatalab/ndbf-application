@@ -348,31 +348,45 @@ export async function generateApplicationPdf({
     columns: ReadonlyArray<{ label: string; x: number; align?: "left" | "center" | "right" }>,
   ) => {
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10.5);
+    doc.setFontSize(layout.rendering.sectionTitleFontSizePt);
     doc.setTextColor(...C_NAVY);
     doc.text(title, MARGIN_X, titleY);
     doc.setDrawColor(...C_BLUE);
-    doc.setLineWidth(0.35);
-    doc.line(MARGIN_X, titleY + 2.5, RIGHT, titleY + 2.5);
+    doc.setLineWidth(layout.rendering.titleRuleWidthMm);
+    doc.line(
+      MARGIN_X,
+      titleY + layout.rendering.titleRuleOffsetMm,
+      RIGHT,
+      titleY + layout.rendering.titleRuleOffsetMm,
+    );
 
-    doc.setFontSize(5.2);
+    doc.setFontSize(layout.rendering.columnFontSizePt);
     doc.setTextColor(...C_MUTED);
     for (const column of columns) {
       const lines = column.label.split("\n");
-      doc.text(lines, column.x, titleY + 8, {
+      doc.text(lines, column.x, titleY + layout.rendering.columnYOffsetMm, {
         align: column.align ?? "left",
-        lineHeightFactor: 1.05,
+        lineHeightFactor: layout.rendering.columnLineHeightFactor,
       });
     }
     doc.setDrawColor(...C_RULE);
-    doc.setLineWidth(0.16);
-    doc.line(MARGIN_X, titleY + 13, RIGHT, titleY + 13);
+    doc.setLineWidth(layout.rendering.columnRuleWidthMm);
+    doc.line(
+      MARGIN_X,
+      titleY + layout.rendering.columnRuleOffsetMm,
+      RIGHT,
+      titleY + layout.rendering.columnRuleOffsetMm,
+    );
   };
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(6.2);
+  doc.setFontSize(layout.rendering.label.fontSizePt);
   doc.setTextColor(...C_BLUE);
-  doc.text("BANK STATEMENT UNDERWRITING", MARGIN_X, 27);
+  doc.text(
+    layout.rendering.label.text,
+    layout.rendering.label.xMm,
+    layout.rendering.label.yMm,
+  );
 
   for (const section of layout.sections) {
     drawUnderwritingSection(
@@ -386,16 +400,13 @@ export async function generateApplicationPdf({
     );
   }
 
-  // Machine-readable, visually hidden anchor. The exact version and writable
-  // rectangle come from the shared contract and are validated before storage.
-  doc.saveGraphicsState();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const GState = (doc as any).GState;
-  if (GState) doc.setGState(new GState({ opacity: 0 }));
+  // Machine-readable, visually hidden anchor. PDF text rendering mode 3 is
+  // intrinsically invisible and is validated at the exact contract coordinate.
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(1);
-  doc.text(layout.anchor, layout.writableRect.xMm, layout.writableRect.yMm);
-  doc.restoreGraphicsState();
+  doc.setFontSize(layout.rendering.anchorFontSizePt);
+  doc.text(layout.anchor, layout.writableRect.xMm, layout.writableRect.yMm, {
+    renderingMode: "invisible",
+  });
 
   // Footer on every page
   const pageTotal = doc.getNumberOfPages();

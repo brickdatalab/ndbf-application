@@ -11,6 +11,24 @@ export type PdfLayoutContract = Readonly<{
     heightMm: number;
   }>;
   anchor: string;
+  rendering: Readonly<{
+    label: Readonly<{
+      text: string;
+      xMm: number;
+      yMm: number;
+      fontSizePt: number;
+    }>;
+    sectionTitleFontSizePt: number;
+    columnFontSizePt: number;
+    columnLineHeightFactor: number;
+    titleRuleOffsetMm: number;
+    titleRuleWidthMm: number;
+    columnYOffsetMm: number;
+    columnRuleOffsetMm: number;
+    columnRuleWidthMm: number;
+    anchorFontSizePt: number;
+    anchorRenderingMode: 3;
+  }>;
   metadata: Readonly<{
     title: string;
     subject: string;

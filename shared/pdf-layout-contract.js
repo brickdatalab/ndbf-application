@@ -7,6 +7,24 @@ export const PDF_LAYOUT_CONTRACTS = Object.freeze({
     underwritingPage: Object.freeze({ position: "last" }),
     writableRect: Object.freeze({ xMm: 18, yMm: 38, widthMm: 174, heightMm: 236 }),
     anchor: "NDBF_PDF_LAYOUT|underwriting-v1|page=underwriting|rect=18,38,174,236",
+    rendering: Object.freeze({
+      label: Object.freeze({
+        text: "BANK STATEMENT UNDERWRITING",
+        xMm: 18,
+        yMm: 27,
+        fontSizePt: 6.2,
+      }),
+      sectionTitleFontSizePt: 10.5,
+      columnFontSizePt: 5.2,
+      columnLineHeightFactor: 1.05,
+      titleRuleOffsetMm: 2.5,
+      titleRuleWidthMm: 0.35,
+      columnYOffsetMm: 8,
+      columnRuleOffsetMm: 13,
+      columnRuleWidthMm: 0.16,
+      anchorFontSizePt: 1,
+      anchorRenderingMode: 3,
+    }),
     metadata: Object.freeze({
       title: "NextDay Biz Funding Signed Application",
       subject: "NDBF signed source PDF layout underwriting-v1",
@@ -20,13 +38,13 @@ export const PDF_LAYOUT_CONTRACTS = Object.freeze({
         titleYMm: 35,
         columns: Object.freeze([
           Object.freeze({ label: "Statement period", xMm: 18, align: "left" }),
-          Object.freeze({ label: "Deposits", xMm: 74, align: "right" }),
-          Object.freeze({ label: "Deposit\ncount", xMm: 84, align: "center" }),
-          Object.freeze({ label: "True revenue", xMm: 111, align: "right" }),
-          Object.freeze({ label: "Withdrawals", xMm: 137, align: "right" }),
-          Object.freeze({ label: "Neg Ending\nDays", xMm: 153, align: "center" }),
-          Object.freeze({ label: "Avg. daily\nbalance", xMm: 177, align: "right" }),
-          Object.freeze({ label: "MCA\ndetected", xMm: 191, align: "right" }),
+          Object.freeze({ label: "Deposits", xMm: 68, align: "left" }),
+          Object.freeze({ label: "Deposit\ncount", xMm: 82, align: "left" }),
+          Object.freeze({ label: "True revenue", xMm: 98, align: "left" }),
+          Object.freeze({ label: "Withdrawals", xMm: 122, align: "left" }),
+          Object.freeze({ label: "Neg Ending\nDays", xMm: 146, align: "left" }),
+          Object.freeze({ label: "Avg. daily\nbalance", xMm: 163, align: "left" }),
+          Object.freeze({ label: "MCA\ndetected", xMm: 185, align: "left" }),
         ]),
       }),
       Object.freeze({
@@ -37,8 +55,8 @@ export const PDF_LAYOUT_CONTRACTS = Object.freeze({
           Object.freeze({ label: "Account last four", xMm: 18, align: "left" }),
           Object.freeze({ label: "Lender", xMm: 62, align: "left" }),
           Object.freeze({ label: "Deposit date", xMm: 112, align: "left" }),
-          Object.freeze({ label: "Amount", xMm: 151, align: "right" }),
-          Object.freeze({ label: "Statement period", xMm: 192, align: "right" }),
+          Object.freeze({ label: "Amount", xMm: 145, align: "left" }),
+          Object.freeze({ label: "Statement period", xMm: 160, align: "left" }),
         ]),
       }),
       Object.freeze({
@@ -48,13 +66,13 @@ export const PDF_LAYOUT_CONTRACTS = Object.freeze({
         columns: Object.freeze([
           Object.freeze({ label: "Lender", xMm: 18, align: "left" }),
           Object.freeze({ label: "Debt type", xMm: 58, align: "left" }),
-          Object.freeze({ label: "First\npayment", xMm: 82, align: "center" }),
-          Object.freeze({ label: "Last\npayment", xMm: 104, align: "center" }),
-          Object.freeze({ label: "Status", xMm: 123, align: "center" }),
-          Object.freeze({ label: "Payments", xMm: 139, align: "right" }),
-          Object.freeze({ label: "Total paid", xMm: 157, align: "right" }),
-          Object.freeze({ label: "Frequency", xMm: 174, align: "right" }),
-          Object.freeze({ label: "Est.\nmonthly", xMm: 192, align: "right" }),
+          Object.freeze({ label: "First\npayment", xMm: 72, align: "left" }),
+          Object.freeze({ label: "Last\npayment", xMm: 92, align: "left" }),
+          Object.freeze({ label: "Status", xMm: 112, align: "left" }),
+          Object.freeze({ label: "Payments", xMm: 130, align: "left" }),
+          Object.freeze({ label: "Total paid", xMm: 147, align: "left" }),
+          Object.freeze({ label: "Frequency", xMm: 165, align: "left" }),
+          Object.freeze({ label: "Est.\nmonthly", xMm: 184, align: "left" }),
         ]),
       }),
     ]),
@@ -66,6 +84,7 @@ export function getPdfLayoutContract(version) {
 }
 
 export function normalizePdfLayoutVersion(value) {
-  if (value === undefined || value === null || value === "") return null;
-  return typeof value === "string" ? value.trim() || null : "__invalid__";
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") return "__invalid__";
+  return value.trim() || "__invalid__";
 }
