@@ -94,7 +94,14 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
           )}
           {...rest}
         />
-        <span className="text-sm text-ink-body leading-tight">{label}</span>
+        <span className="text-sm text-ink-body leading-tight">
+          {label}
+          {rest.required && (
+            <span className="text-red-500 ml-0.5" aria-hidden="true">
+              *
+            </span>
+          )}
+        </span>
       </label>
     );
   }

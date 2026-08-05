@@ -276,17 +276,17 @@ export async function generateApplicationPdf({
   }
 
   // Section 5 — Authorization + signature
-  // Tightened to ~7pt with a 2.7mm line height so the full 3-paragraph clause
-  // fits on the same page as the rest of the form data.
+  // Compact legal fine print so the complete clause remains readable without
+  // consuming disproportionate vertical space in the application PDF.
   sectionTitle("Authorization and Agreement");
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
+  doc.setFontSize(6.25);
   doc.setTextColor(...C_BODY);
   for (const para of TERMS_PARAGRAPHS) {
-    ensureSpace(8);
+    ensureSpace(6);
     const lines = doc.splitTextToSize(para, RIGHT - MARGIN_X);
     doc.text(lines, MARGIN_X, y);
-    y += 2.7 * lines.length + 1.5;
+    y += 2.15 * lines.length + 0.8;
   }
 
   // Signature block

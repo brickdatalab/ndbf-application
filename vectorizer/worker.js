@@ -10,6 +10,8 @@ import { PubSub } from "@google-cloud/pubsub";
 import { Storage } from "@google-cloud/storage";
 
 import { buildSubmissionDocuments, parseGcsUri } from "./documents.js";
+import { createExtractionClient } from "./extraction-client.js";
+import { ingestAndEnqueue } from "./extraction-handoff.js";
 import { ingestDocument } from "./ingest.js";
 import { createOpenAIClient } from "./openai.js";
 
@@ -23,9 +25,16 @@ const SUBSCRIPTION =
   process.env.VECTOR_SUBSCRIPTION || "submission-completed-vectorizer";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_VECTOR_STORE_ID = process.env.OPENAI_VECTOR_STORE_ID || "";
+const NDBF_EXTRACTION_URL = process.env.NDBF_EXTRACTION_URL || "";
+const NDBF_EXTRACTION_API_TOKEN = process.env.NDBF_EXTRACTION_API_TOKEN || "";
 
-if (!OPENAI_API_KEY || !OPENAI_VECTOR_STORE_ID) {
-  console.error("[vectorizer] FATAL: required OpenAI environment variables are missing");
+if (
+  !OPENAI_API_KEY ||
+  !OPENAI_VECTOR_STORE_ID ||
+  !NDBF_EXTRACTION_URL ||
+  !NDBF_EXTRACTION_API_TOKEN
+) {
+  console.error("[vectorizer] FATAL: required runtime environment variables are missing");
   process.exit(1);
 }
 
@@ -38,6 +47,10 @@ const subscription = pubsub.subscription(SUBSCRIPTION, {
 const openai = createOpenAIClient({
   apiKey: OPENAI_API_KEY,
   vectorStoreId: OPENAI_VECTOR_STORE_ID,
+});
+const extractionClient = createExtractionClient({
+  endpoint: NDBF_EXTRACTION_URL,
+  token: NDBF_EXTRACTION_API_TOKEN,
 });
 
 const submissionsTable = `\`${PROJECT_ID}.${BQ_DATASET}.${BQ_SUBMISSIONS_TABLE}\``;
@@ -277,14 +290,19 @@ async function handleMessage(message) {
     const documents = buildSubmissionDocuments(row);
     const repo = createRepository(message.id);
     for (const document of documents) {
-      const result = await ingestDocument(document, {
-        repo,
-        loadSource,
-        prepareUpload,
-        openai,
+      const result = await ingestAndEnqueue(document, {
+        ingest: ingestDocument,
+        ingestOptions: {
+          repo,
+          loadSource,
+          prepareUpload,
+          openai,
+        },
+        extractionClient,
       });
       console.log(
-        `[vectorizer] msg=${message.id} document=${document.document_id} status=${result.status}`
+        `[vectorizer] msg=${message.id} document=${document.document_id} ` +
+          `status=${result.status} extraction=${result.extractionStatus}`
       );
     }
     console.log(`[vectorizer] msg=${message.id} completed_pdfs=${documents.length}`);

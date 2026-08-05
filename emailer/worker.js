@@ -15,6 +15,7 @@ import { PubSub } from "@google-cloud/pubsub";
 import { Storage } from "@google-cloud/storage";
 import { BigQuery } from "@google-cloud/bigquery";
 import nodemailer from "nodemailer";
+import { resolveRecipients } from "./recipient-routing.js";
 
 // ---------- Config ----------
 
@@ -37,13 +38,6 @@ const EMAIL_TO = (
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-
-// Per-rep extra recipients: when `?app=<key>` lands, these addresses are
-// added to the To: line for that one submission (deduped against EMAIL_TO).
-// Keys are lower-cased for case-insensitive matching.
-const REP_EXTRA_RECIPIENTS = {
-  nicole: ["nicole@theapprovaldept.com"],
-};
 
 const MAX_TOTAL_ATTACHMENT_BYTES = 24 * 1024 * 1024; // ~24MB safety margin under Gmail's 25MB cap
 
@@ -402,9 +396,7 @@ async function handleMessage(message) {
     const email = await composeEmail(row);
 
     // Layer in any rep-specific extra recipients based on app_param, deduped.
-    const appKey = String(row.app_param || "").toLowerCase().trim();
-    const extras = REP_EXTRA_RECIPIENTS[appKey] || [];
-    const recipients = Array.from(new Set([...EMAIL_TO, ...extras]));
+    const { appKey, extras, recipients } = resolveRecipients(EMAIL_TO, row.app_param);
     if (extras.length) {
       console.log(`[emailer] msg=${id} app_param=${appKey} adding extras=${extras.join(",")}`);
     }

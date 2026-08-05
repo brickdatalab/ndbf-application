@@ -158,6 +158,7 @@ export function SignSubmit() {
         <div className="pt-3 border-t border-divider-soft">
           <Checkbox
             id="termsAccepted"
+            required
             checked={f.termsAccepted}
             onChange={(e) => update({ termsAccepted: e.target.checked })}
             label="I have read and agree to the Terms and Authorization Statement below."

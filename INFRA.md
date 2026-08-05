@@ -168,6 +168,22 @@ Each PDF has one lookup row in
 `document_id` and linked to the parent `entry_id`, GCS URI, OpenAI file ID, and
 indexing status. No historical documents are backfilled automatically.
 
+The external extraction agent writes one nested row per PDF to
+`ndbf_applications.bank_statement_agent_extractions`. BigQuery immediately
+exposes deterministic per-document calculations through
+`bank_statement_calculated` and submission-wide underwriting totals through
+`submission_bank_statement_summary`. A canonical extraction view prevents retry
+fan-out, and the versioned underwriting views calculate true deposits, daily
+balances, MCA positions, missed payments, and submission-level status without
+exposing account numbers or raw descriptions at the final retrieval boundary.
+
+After all expected PDFs are visible, `ndbf-extraction-worker` publishes a
+privacy-safe, at-least-once event to `bank-statement-underwriting-ready`.
+Downstream consumers deduplicate with its stable `event_key`; the retained
+`bank-statement-underwriting-ready-monitor` subscription holds events until a
+relay consumer is connected. The agent posting contract and table ID are
+documented in `vectorizer/BANK_STATEMENT_EXTRACTION_CONTRACT.md`.
+
 ## 7. Software stack on the VM
 
 Pre-installed (ships with GCE Debian image):

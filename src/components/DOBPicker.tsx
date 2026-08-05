@@ -7,7 +7,7 @@ type Props = {
   value: string;
   onChange: (iso: string) => void;
   idBase?: string;
-  /** Defaults to current year */
+  /** Defaults to 2010 */
   maxYear?: number;
   /** Defaults to current year - 100 */
   minYear?: number;
@@ -30,8 +30,7 @@ function parseIso(v: string): { y: string; m: string; d: string } {
  * complete value is cleared.
  */
 export function DOBPicker({ value, onChange, idBase = "dob", maxYear, minYear }: Props) {
-  const now = new Date();
-  const yMax = maxYear ?? now.getFullYear();
+  const yMax = maxYear ?? 2010;
   const yMin = minYear ?? yMax - 100;
 
   const years = useMemo(() => {

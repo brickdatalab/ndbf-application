@@ -6,7 +6,8 @@
   "description": "NextDay Biz Funding — submission email notifier (Pub/Sub subscriber).",
   "main": "worker.js",
   "scripts": {
-    "start": "node worker.js"
+    "start": "node worker.js",
+    "test": "node --test *.node-test.js"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.4",
