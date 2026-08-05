@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { FormData } from "../store";
 import { PDF_LAYOUT_VERSION, getPdfLayoutContract } from "../../shared/pdf-layout-contract.js";
 import { generateApplicationPdf } from "./pdf";
-import { fingerprintDecodedUnderwritingPageContent } from "../../server/pdf-layout-fingerprint.js";
-import { validateDeclaredPdfLayout } from "../../server/pdf-layout-validator.js";
+import { fingerprintDecodedUnderwritingPageContent } from "../../shared/pdf-layout-fingerprint.js";
+import { validateDeclaredPdfLayout } from "../../shared/pdf-layout-validator.js";
 
 const formData: FormData = {
   contactName: "Synthetic Applicant",
