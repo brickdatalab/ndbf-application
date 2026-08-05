@@ -106,6 +106,21 @@ test("requires one unique statement binding per expected document", () => {
     code: "SUMMARY_STATEMENT_COUNT_MISMATCH",
   });
 
+  for (const missingKey of ["document_id", "openai_file_id"]) {
+    const missingOne = summaryRow();
+    delete missingOne.statements[0][missingKey];
+    assert.throws(() => validateSummaryRow(missingOne, event), {
+      code: "SUMMARY_DOCUMENT_BINDING_INVALID",
+    });
+  }
+
+  const missingBoth = summaryRow();
+  delete missingBoth.statements[0].document_id;
+  delete missingBoth.statements[0].openai_file_id;
+  assert.throws(() => validateSummaryRow(missingBoth, event), {
+    code: "SUMMARY_DOCUMENT_BINDING_INVALID",
+  });
+
   const duplicateEvent = {
     ...event,
     expected_document_count: 2,
@@ -119,6 +134,17 @@ test("requires one unique statement binding per expected document", () => {
     { ...duplicate.statements[0], document_id: "doc_1", openai_file_id: "file_1" },
   ];
   assert.throws(() => validateSummaryRow(duplicate, duplicateEvent), {
+    code: "SUMMARY_DOCUMENT_BINDING_INVALID",
+  });
+
+  const duplicateUnbound = summaryRow();
+  duplicateUnbound.expected_document_count = 2;
+  duplicateUnbound.extracted_document_count = 2;
+  duplicateUnbound.statements = [
+    { ...duplicateUnbound.statements[0], document_id: undefined, openai_file_id: undefined },
+    { ...duplicateUnbound.statements[0], document_id: undefined, openai_file_id: undefined },
+  ];
+  assert.throws(() => validateSummaryRow(duplicateUnbound, duplicateEvent), {
     code: "SUMMARY_DOCUMENT_BINDING_INVALID",
   });
 });

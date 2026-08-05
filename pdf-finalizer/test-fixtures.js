@@ -66,6 +66,8 @@ export function summaryRow({
     summary_fingerprint: fingerprint,
     statements: [
       {
+        document_id: "doc_synthetic1",
+        openai_file_id: "file_synthetic1",
         account_last_four: "0371",
         statement_start_date: "2024-06-03",
         statement_end_date: "2024-06-30",

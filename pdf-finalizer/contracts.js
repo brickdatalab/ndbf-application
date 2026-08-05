@@ -155,10 +155,11 @@ export function validateSummaryRow(row, event) {
   for (const statement of row.statements) {
     const documentId = statement?.document_id;
     const fileId = statement?.openai_file_id;
-    if (documentId === undefined && fileId === undefined) continue;
     if (
-      !OPAQUE_ID_PATTERN.test(documentId ?? "") ||
-      !OPAQUE_ID_PATTERN.test(fileId ?? "") ||
+      typeof documentId !== "string" ||
+      typeof fileId !== "string" ||
+      !OPAQUE_ID_PATTERN.test(documentId) ||
+      !OPAQUE_ID_PATTERN.test(fileId) ||
       (documentBindings.has(documentId) && documentBindings.get(documentId) !== fileId) ||
       (fileBindings.has(fileId) && fileBindings.get(fileId) !== documentId) ||
       documentBindings.has(documentId) ||
