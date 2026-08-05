@@ -1,0 +1,15 @@
+{
+  "name": "@ndbf/pdf-layout",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./pdf-layout-contract.js": "./pdf-layout-contract.js",
+    "./pdf-layout-validator.js": "./pdf-layout-validator.js",
+    "./pdf-layout-fingerprint.js": "./pdf-layout-fingerprint.js",
+    "./pdf-underwriting-page.js": "./pdf-underwriting-page.js"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  }
+}

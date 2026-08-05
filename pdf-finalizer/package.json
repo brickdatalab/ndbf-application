@@ -1,13 +1,12 @@
 {
-  "name": "ndbf-backend",
+  "name": "ndbf-pdf-finalizer",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "NextDay Biz Funding — submission backend (writes to GCS + BigQuery).",
-  "main": "server.js",
+  "description": "Finalizes signed application PDFs after bank-statement underwriting completes.",
+  "main": "worker.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node worker.js",
     "test": "node --test *.node-test.js"
   },
   "dependencies": {
@@ -15,9 +14,6 @@
     "@google-cloud/pubsub": "^4.7.2",
     "@google-cloud/storage": "^7.13.0",
     "@ndbf/pdf-layout": "file:../shared",
-    "cors": "^2.8.5",
-    "express": "^4.21.1",
-    "multer": "^1.4.5-lts.1",
     "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
