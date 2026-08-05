@@ -203,7 +203,7 @@ export function createFinalizer({
       analysis_version: 1,
       event_key: `application_pdf:${event.entry_id}:v1:${summary.summary_fingerprint}`,
       entry_id: event.entry_id,
-      status: "READY",
+      status: event.status,
       summary_fingerprint: summary.summary_fingerprint,
       source_generation: sourceGeneration,
       final_generation: finalGeneration,

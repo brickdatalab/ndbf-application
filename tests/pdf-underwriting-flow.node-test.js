@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import test from "node:test";
 
 import {
@@ -20,8 +21,36 @@ import {
 } from "../pdf-finalizer/test-fixtures.js";
 import { validateDeclaredPdfLayout } from "../shared/pdf-layout-validator.js";
 
+const requireFromFinalizer = createRequire(
+  new URL("../pdf-finalizer/package.json", import.meta.url),
+);
+const {
+  PDFArray,
+  PDFDocument,
+  PDFRawStream,
+  decodePDFRawStream,
+} = requireFromFinalizer("pdf-lib");
+
 function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function extractedText(buffer) {
+  const document = await PDFDocument.load(buffer, { updateMetadata: false });
+  const output = [];
+  for (const page of document.getPages()) {
+    const contents = page.node.Contents();
+    const refs = contents instanceof PDFArray ? contents.asArray() : [contents];
+    for (const ref of refs) {
+      const stream = document.context.lookup(ref);
+      if (!(stream instanceof PDFRawStream)) continue;
+      const content = Buffer.from(decodePDFRawStream(stream).decode()).toString("latin1");
+      for (const match of content.matchAll(/<([0-9A-Fa-f]+)> Tj/g)) {
+        output.push(Buffer.from(match[1], "hex").toString("latin1"));
+      }
+    }
+  }
+  return output.join(" ");
 }
 
 test("synthetic source finalizes all three sections and replay is idempotent", async () => {
@@ -71,6 +100,7 @@ test("synthetic source finalizes all three sections and replay is idempotent", a
   assert.deepEqual(await finalize(readyEvent()), { code: "ARTIFACT_CREATED" });
   const [artifact] = artifacts.values();
   const firstArtifactHash = sha256(artifact.buffer);
+  const finalText = await extractedText(artifact.buffer);
   assert.equal(renderedMetrics.length, 1);
   assert.equal(renderedMetrics[0].statementRows, 1);
   assert.equal(renderedMetrics[0].mcaDepositRows, 1);
@@ -78,6 +108,11 @@ test("synthetic source finalizes all three sections and replay is idempotent", a
   assert.equal(renderedMetrics[0].clippedRows, 0);
   assert.ok(renderedMetrics[0].pageCount >= 2);
   assert.equal(await verifyFinalizedPdf(artifact.buffer, ENTRY_ID), true);
+  assert.notEqual(firstArtifactHash, sourceHash);
+  assert.match(finalText.replace(/\s/g, ""), /278,945\.82/);
+  assert.match(finalText, /Extremely Long Synthetic Merchant Cash Advance Lender/);
+  assert.match(finalText, /Synthetic Lender 001/);
+  assert.match(finalText, /Merchant Cash Advance/);
   assert.equal(sha256(source), sourceHash);
 
   assert.deepEqual(await finalize(readyEvent()), { code: "ARTIFACT_REUSED" });

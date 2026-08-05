@@ -228,6 +228,14 @@ test("stores create-only before publishing and reuses a verified replay artifact
   assert.match([...memory.objects.keys()][0], new RegExp(`${ENTRY_ID}_underwritten_v1_a{64}\\.pdf$`));
 });
 
+test("preserves REVIEW_REQUIRED in the PDF-ready event", async () => {
+  const memory = memoryDependencies({ status: "REVIEW_REQUIRED" });
+  const processEvent = createFinalizer(memory.dependencies);
+  await processEvent(readyEvent("REVIEW_REQUIRED"));
+  assert.equal(memory.published.length, 1);
+  assert.equal(memory.published[0].status, "REVIEW_REQUIRED");
+});
+
 test("a changed summary fingerprint creates a new immutable object", async () => {
   const memory = memoryDependencies();
   const processEvent = createFinalizer(memory.dependencies);
