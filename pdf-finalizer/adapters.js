@@ -15,7 +15,9 @@ export const SUMMARY_QUERY = `
     summary.debt_accounts,
     summary.summary_fingerprint,
     source.pdf_gcs_key,
-    source.pdf_layout_version
+    source.pdf_layout_version,
+    source.pdf_source_generation,
+    source.pdf_source_sha256
   FROM \`lithe-hallway-493420-r4.ndbf_applications.application_pdf_underwriting_summary\` AS summary
   JOIN \`lithe-hallway-493420-r4.ndbf_applications.submissions\` AS source
     USING (entry_id)
@@ -60,11 +62,12 @@ export function createProductionAdapters({
       return rows;
     },
 
-    async loadSource(uri) {
+    async loadSource(uri, expectedGeneration) {
       const { objectName } = parseGsUri(uri, bucketName);
-      const file = bucket.file(objectName);
-      const [metadata] = await file.getMetadata();
-      const generation = String(metadata.generation ?? "");
+      const generation = String(expectedGeneration ?? "");
+      if (!/^[0-9]+$/.test(generation)) {
+        throw new Error("GCS_SOURCE_GENERATION_INVALID");
+      }
       const pinned = bucket.file(objectName, { generation });
       const [buffer] = await pinned.download({ validation: "crc32c" });
       const [verifiedMetadata] = await pinned.getMetadata();

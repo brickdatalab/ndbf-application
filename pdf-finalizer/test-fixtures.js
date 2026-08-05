@@ -1,4 +1,5 @@
 import { jsPDF } from "jspdf";
+import { createHash } from "node:crypto";
 import {
   PDF_LAYOUT_VERSION,
   getPdfLayoutContract,
@@ -10,7 +11,7 @@ import {
 
 export const ENTRY_ID = "ndbf_synthetic123";
 
-export function sourcePdf() {
+function createSourcePdf() {
   const contract = getPdfLayoutContract(PDF_LAYOUT_VERSION);
   const document = new jsPDF({ unit: "mm", format: "a4" });
   document.setProperties(contract.metadata);
@@ -22,6 +23,16 @@ export function sourcePdf() {
   }
   return Buffer.from(document.output("arraybuffer"));
 }
+
+const SOURCE_PDF = createSourcePdf();
+
+export function sourcePdf() {
+  return Buffer.from(SOURCE_PDF);
+}
+
+export const SOURCE_PDF_SHA256 = createHash("sha256")
+  .update(SOURCE_PDF)
+  .digest("hex");
 
 export function readyEvent(status = "READY") {
   return {
@@ -49,6 +60,8 @@ export function summaryRow({
     extracted_document_count: 1,
     all_documents_processed: true,
     pdf_layout_version: "underwriting-v1",
+    pdf_source_generation: "10",
+    pdf_source_sha256: SOURCE_PDF_SHA256,
     pdf_gcs_key: `gs://app_banks/synthetic_${ENTRY_ID}/synthetic.pdf`,
     summary_fingerprint: fingerprint,
     statements: [

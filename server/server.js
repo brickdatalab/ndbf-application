@@ -19,6 +19,7 @@ import {
 } from "./pdf-layout-validator.js";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 
 // ---------- Config ----------
 
@@ -94,15 +95,30 @@ function iso() {
   return new Date().toISOString();
 }
 
-async function uploadToGcs({ folder, filename, buffer, contentType }) {
+async function uploadToGcs({ folder, filename, buffer, contentType, createOnly = true }) {
   const objectName = `${folder}/${filename}`;
   const file = bucket.file(objectName);
   await file.save(buffer, {
     contentType: contentType || "application/octet-stream",
     resumable: false,
     metadata: { cacheControl: "private, max-age=0, no-transform" },
+    ...(createOnly ? { preconditionOpts: { ifGenerationMatch: 0 } } : {}),
   });
-  return `gs://${BUCKET_NAME}/${objectName}`;
+  const [metadata] = await file.getMetadata();
+  return {
+    uri: `gs://${BUCKET_NAME}/${objectName}`,
+    generation: String(metadata.generation ?? ""),
+  };
+}
+
+function uploadUri(result) {
+  return typeof result === "string" ? result : result?.uri ?? null;
+}
+
+function uploadGeneration(result) {
+  return typeof result === "object" && result
+    ? String(result.generation ?? "")
+    : "";
 }
 
 function pickNum(v) {
@@ -130,7 +146,7 @@ function mapSalesBucket(b) {
 }
 
 // Map the client payload to a BigQuery row matching the submissions schema.
-export function buildBqRow({ entryId, submittedAt, payload, pdfLayoutVersion, gcsFolder, bankKeys, pdfKey, ipAddress, userAgent }) {
+export function buildBqRow({ entryId, submittedAt, payload, pdfLayoutVersion, pdfSourceGeneration, pdfSourceSha256, gcsFolder, bankKeys, pdfKey, ipAddress, userAgent }) {
   const f = payload.formData || {};
   const owner = f.owner || {};
   const addr = f.physicalAddress || {};
@@ -183,6 +199,8 @@ export function buildBqRow({ entryId, submittedAt, payload, pdfLayoutVersion, gc
     bank_statement_gcs_keys: bankKeys,
     pdf_gcs_key: pdfKey || null,
     pdf_layout_version: pdfLayoutVersion,
+    pdf_source_generation: pdfSourceGeneration,
+    pdf_source_sha256: pdfSourceSha256,
     gcs_folder: `gs://${BUCKET_NAME}/${gcsFolder}`,
 
     signature_captured: Boolean(f.signature),
@@ -269,6 +287,7 @@ export function createSubmitHandler({
             filename: `bank_${String(i + 1).padStart(2, "0")}_${safe}`,
             buffer: f.buffer,
             contentType: f.mimetype || "application/octet-stream",
+            createOnly: true,
           })
         );
       }
@@ -280,13 +299,29 @@ export function createSubmitHandler({
           filename: `${slug}_${entryId}.pdf`,
           buffer: pdfFile.buffer,
           contentType: "application/pdf",
+          createOnly: true,
         });
       }
 
-      const [bankKeys, pdfKey] = await Promise.all([
+      const [bankUploadResults, pdfUploadResult] = await Promise.all([
         Promise.all(uploadPromises),
         pdfPromise || Promise.resolve(null),
       ]);
+      const bankKeys = bankUploadResults.map(uploadUri);
+      const pdfKey = uploadUri(pdfUploadResult);
+      const pdfSourceGeneration = pdfLayoutVersion
+        ? uploadGeneration(pdfUploadResult)
+        : null;
+      const pdfSourceSha256 = pdfLayoutVersion
+        ? createHash("sha256").update(pdfFile.buffer).digest("hex")
+        : null;
+      if (
+        pdfLayoutVersion &&
+        (!/^[0-9]+$/.test(pdfSourceGeneration) ||
+          !/^[a-f0-9]{64}$/.test(pdfSourceSha256))
+      ) {
+        throw new Error("PDF source integrity metadata was not confirmed");
+      }
 
       // Insert BQ row. Streaming insert is fine for our volume.
       const ipAddress =
@@ -300,6 +335,8 @@ export function createSubmitHandler({
         submittedAt,
         payload,
         pdfLayoutVersion,
+        pdfSourceGeneration,
+        pdfSourceSha256,
         gcsFolder: folder,
         bankKeys,
         pdfKey,

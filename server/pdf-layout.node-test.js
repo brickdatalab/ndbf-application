@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { jsPDF } from "jspdf";
 import {
   PDF_LAYOUT_VERSION,
@@ -165,8 +166,16 @@ test("stores the validated version while absent legacy declarations remain NULL"
     const versioned = declaration === PDF_LAYOUT_VERSION;
     const rows = [];
     const events = [];
+    const uploads = [];
+    const pdfBuffer = versioned ? createPdf() : null;
     const handler = createSubmitHandler({
-      uploadFile: async ({ filename }) => `gs://test/${filename}`,
+      uploadFile: async (request) => {
+        uploads.push(request);
+        return {
+          uri: `gs://test/${request.filename}`,
+          generation: "123456789",
+        };
+      },
       insertRows: async (value) => {
         rows.push(...value);
       },
@@ -190,7 +199,7 @@ test("stores the validated version while absent legacy declarations remain NULL"
             },
           }),
         },
-        files: versioned ? { pdf: [{ buffer: createPdf() }] } : {},
+        files: versioned ? { pdf: [{ buffer: pdfBuffer }] } : {},
         headers: {},
         socket: {},
       },
@@ -205,5 +214,46 @@ test("stores the validated version while absent legacy declarations remain NULL"
       events[0].json.pdf_layout_version,
       versioned ? PDF_LAYOUT_VERSION : null,
     );
+    assert.equal(rows[0].pdf_source_generation, versioned ? "123456789" : null);
+    assert.equal(
+      rows[0].pdf_source_sha256,
+      versioned
+        ? createHash("sha256").update(pdfBuffer).digest("hex")
+        : null,
+    );
+    if (versioned) assert.equal(uploads[0].createOnly, true);
   }
+});
+
+test("never inserts or publishes when source generation is unconfirmed", async () => {
+  const calls = { insert: 0, publish: 0 };
+  const handler = createSubmitHandler({
+    uploadFile: async ({ filename }) => ({
+      uri: `gs://test/${filename}`,
+      generation: "",
+    }),
+    insertRows: async () => {
+      calls.insert += 1;
+    },
+    publishMessage: async () => {
+      calls.publish += 1;
+    },
+  });
+  const response = responseRecorder();
+  await handler(
+    {
+      body: {
+        payload: JSON.stringify({
+          pdfLayoutVersion: PDF_LAYOUT_VERSION,
+          formData: { businessLegalName: "Synthetic" },
+        }),
+      },
+      files: { pdf: [{ buffer: createPdf() }] },
+      headers: {},
+      socket: {},
+    },
+    response,
+  );
+  assert.equal(response.statusCode, 500);
+  assert.deepEqual(calls, { insert: 0, publish: 0 });
 });

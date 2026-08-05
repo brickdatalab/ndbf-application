@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { createFinalizer, createMessageHandler } from "./finalizer.js";
-import { parseUnderwritingReadyEvent } from "./contracts.js";
+import { parseUnderwritingReadyEvent, validateSummaryRow } from "./contracts.js";
 import { createProductionAdapters } from "./adapters.js";
 import { renderFinalizedPdf, verifyFinalizedPdf } from "./renderer.js";
 import { validateDeclaredPdfLayout } from "@ndbf/pdf-layout/pdf-layout-validator.js";
@@ -97,6 +98,58 @@ test("queries the joined read model once with an entry_id parameter", async () =
   assert.doesNotMatch(queryOptions.query, new RegExp(ENTRY_ID));
 });
 
+test("requires one unique statement binding per expected document", () => {
+  const event = readyEvent();
+  const incomplete = summaryRow();
+  incomplete.statements = [];
+  assert.throws(() => validateSummaryRow(incomplete, event), {
+    code: "SUMMARY_STATEMENT_COUNT_MISMATCH",
+  });
+
+  const duplicateEvent = {
+    ...event,
+    expected_document_count: 2,
+    extracted_document_count: 2,
+  };
+  const duplicate = summaryRow();
+  duplicate.expected_document_count = 2;
+  duplicate.extracted_document_count = 2;
+  duplicate.statements = [
+    { ...duplicate.statements[0], document_id: "doc_1", openai_file_id: "file_1" },
+    { ...duplicate.statements[0], document_id: "doc_1", openai_file_id: "file_1" },
+  ];
+  assert.throws(() => validateSummaryRow(duplicate, duplicateEvent), {
+    code: "SUMMARY_DOCUMENT_BINDING_INVALID",
+  });
+});
+
+test("enforces canonical decimals with status-aware missing values", () => {
+  const ready = summaryRow();
+  ready.statements[0].deposits = "1e3";
+  assert.throws(() => validateSummaryRow(ready, readyEvent()), {
+    code: "SUMMARY_STATEMENT_INVALID",
+  });
+
+  const missingReady = summaryRow();
+  missingReady.statements[0].true_revenue = null;
+  assert.throws(() => validateSummaryRow(missingReady, readyEvent()), {
+    code: "SUMMARY_STATEMENT_INVALID",
+  });
+
+  const review = summaryRow({ status: "REVIEW_REQUIRED" });
+  review.statements[0].deposits = null;
+  review.statements[0].true_revenue = null;
+  review.debt_accounts[0].estimated_monthly = null;
+  assert.doesNotThrow(() =>
+    validateSummaryRow(review, readyEvent("REVIEW_REQUIRED")),
+  );
+  review.statements[0].deposits = "01.00";
+  assert.throws(
+    () => validateSummaryRow(review, readyEvent("REVIEW_REQUIRED")),
+    { code: "SUMMARY_STATEMENT_INVALID" },
+  );
+});
+
 test("stores create-only before publishing and reuses a verified replay artifact", async () => {
   const memory = memoryDependencies();
   const processEvent = createFinalizer(memory.dependencies);
@@ -135,9 +188,14 @@ test("a changed summary fingerprint creates a new immutable object", async () =>
 
 test("invalid source layout and publish failures remain retryable", async () => {
   const memory = memoryDependencies();
+  const invalidSource = Buffer.from("not a pdf");
+  memory.setRow({
+    ...summaryRow(),
+    pdf_source_sha256: createHash("sha256").update(invalidSource).digest("hex"),
+  });
   memory.dependencies.loadSource = async () => ({
     objectName: `synthetic_${ENTRY_ID}/source.pdf`,
-    buffer: Buffer.from("not a pdf"),
+    buffer: invalidSource,
     generation: "10",
   });
   await assert.rejects(createFinalizer(memory.dependencies)(readyEvent()), {
@@ -152,6 +210,29 @@ test("invalid source layout and publish failures remain retryable", async () => 
     code: "READY_PUBLISH_FAILED",
   });
   assert.equal(publishFailure.objects.size, 1);
+});
+
+test("rejects source generation or digest drift before rendering", async () => {
+  const generation = memoryDependencies();
+  generation.dependencies.loadSource = async () => ({
+    objectName: `synthetic_${ENTRY_ID}/source.pdf`,
+    buffer: sourcePdf(),
+    generation: "11",
+  });
+  await assert.rejects(createFinalizer(generation.dependencies)(readyEvent()), {
+    code: "SOURCE_GENERATION_MISMATCH",
+  });
+
+  const digest = memoryDependencies();
+  const originalQuery = digest.dependencies.queryRows;
+  digest.dependencies.queryRows = async (entryId) => {
+    const rows = await originalQuery(entryId);
+    return [{ ...rows[0], pdf_source_sha256: "b".repeat(64) }];
+  };
+  await assert.rejects(createFinalizer(digest.dependencies)(readyEvent()), {
+    code: "SOURCE_SHA256_MISMATCH",
+  });
+  assert.equal(digest.objects.size, 0);
 });
 
 test("message handler ACKs invalid/legacy and NACKs retryable failures without sensitive logs", async () => {

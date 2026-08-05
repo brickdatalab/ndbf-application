@@ -13,7 +13,7 @@
     "@google-cloud/bigquery": "^7.9.4",
     "@google-cloud/pubsub": "^4.7.2",
     "@google-cloud/storage": "^7.13.0",
-    "@ndbf/pdf-layout": "file:../shared",
+    "@ndbf/pdf-layout": "file:./shared",
     "pdf-lib": "^1.17.1"
   },
   "devDependencies": {

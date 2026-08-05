@@ -91,7 +91,10 @@ export function createFinalizer({
 
     let source;
     try {
-      source = await loadSource(summary.pdf_gcs_key);
+      source = await loadSource(
+        summary.pdf_gcs_key,
+        summary.pdf_source_generation,
+      );
     } catch (error) {
       throw new RetryableFinalizerError("SOURCE_READ_FAILED", error);
     }
@@ -102,9 +105,15 @@ export function createFinalizer({
       source.generation,
       "SOURCE_GENERATION_INVALID",
     );
+    if (sourceGeneration !== summary.pdf_source_generation) {
+      throw new RetryableFinalizerError("SOURCE_GENERATION_MISMATCH");
+    }
     const sourceSha256 = sha256(source.buffer);
-    if (!isSha256(sourceSha256)) {
-      throw new RetryableFinalizerError("SOURCE_SHA256_INVALID");
+    if (
+      !isSha256(sourceSha256) ||
+      sourceSha256 !== summary.pdf_source_sha256
+    ) {
+      throw new RetryableFinalizerError("SOURCE_SHA256_MISMATCH");
     }
     try {
       await validateSourcePdf({

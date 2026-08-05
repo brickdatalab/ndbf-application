@@ -11,6 +11,9 @@ const INPUT_KEYS = new Set([
 
 const ENTRY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const SHA256_PATTERN = /^[A-Fa-f0-9]{64}$/;
+const DECIMAL_PATTERN = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
+const INTEGER_PATTERN = /^(?:0|[1-9][0-9]*)$/;
+const OPAQUE_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
 const ALLOWED_STATUSES = new Set(["READY", "REVIEW_REQUIRED"]);
 
 export class NonRetryableFinalizerError extends Error {
@@ -81,23 +84,35 @@ function assertBoundedString(value, field, { nullable = true, max = 512 } = {}) 
   }
 }
 
-function validateRows(rows, fields, name) {
+function validateRows(rows, fields, name, status) {
   for (const row of rows) {
     if (!isPlainObject(row)) {
       throw new RetryableFinalizerError(`SUMMARY_${name}_INVALID`);
     }
-    for (const [field, options] of fields) {
-      if (options === "count") {
+    for (const [field, options = {}] of fields) {
+      const value = row[field];
+      const required = status === "READY" && options.requiredReady;
+      if (options.type === "decimal") {
         if (
-          row[field] !== null &&
-          row[field] !== undefined &&
-          !(Number.isInteger(row[field]) && row[field] >= 0) &&
-          !/^[0-9]+$/.test(String(row[field]))
+          (value === null || value === undefined) &&
+          !required
+        ) continue;
+        if (typeof value !== "string" || !DECIMAL_PATTERN.test(value)) {
+          throw new RetryableFinalizerError(`SUMMARY_${name}_INVALID`);
+        }
+      } else if (options.type === "count") {
+        if ((value === null || value === undefined) && !required) continue;
+        if (
+          !(Number.isInteger(value) && value >= 0) &&
+          !(typeof value === "string" && INTEGER_PATTERN.test(value))
         ) {
           throw new RetryableFinalizerError(`SUMMARY_${name}_INVALID`);
         }
       } else {
-        assertBoundedString(row[field], `${name}_${field}`, options);
+        assertBoundedString(value, `${name}_${field}`, {
+          ...options,
+          nullable: required ? false : options.nullable,
+        });
       }
     }
   }
@@ -115,6 +130,8 @@ export function validateSummaryRow(row, event) {
     row.extracted_document_count !== event.extracted_document_count ||
     row.all_documents_processed !== true ||
     row.pdf_layout_version !== "underwriting-v1" ||
+    !/^[0-9]+$/.test(row.pdf_source_generation ?? "") ||
+    !SHA256_PATTERN.test(row.pdf_source_sha256 ?? "") ||
     !SHA256_PATTERN.test(row.summary_fingerprint ?? "")
   ) {
     throw new RetryableFinalizerError("SUMMARY_EVENT_MISMATCH");
@@ -126,6 +143,32 @@ export function validateSummaryRow(row, event) {
   assertArray(row.statements, "statements");
   assertArray(row.mca_deposits, "mca_deposits");
   assertArray(row.debt_accounts, "debt_accounts");
+  if (
+    row.statements.length !== event.extracted_document_count ||
+    row.statements.length !== event.expected_document_count
+  ) {
+    throw new RetryableFinalizerError("SUMMARY_STATEMENT_COUNT_MISMATCH");
+  }
+
+  const documentBindings = new Map();
+  const fileBindings = new Map();
+  for (const statement of row.statements) {
+    const documentId = statement?.document_id;
+    const fileId = statement?.openai_file_id;
+    if (documentId === undefined && fileId === undefined) continue;
+    if (
+      !OPAQUE_ID_PATTERN.test(documentId ?? "") ||
+      !OPAQUE_ID_PATTERN.test(fileId ?? "") ||
+      (documentBindings.has(documentId) && documentBindings.get(documentId) !== fileId) ||
+      (fileBindings.has(fileId) && fileBindings.get(fileId) !== documentId) ||
+      documentBindings.has(documentId) ||
+      fileBindings.has(fileId)
+    ) {
+      throw new RetryableFinalizerError("SUMMARY_DOCUMENT_BINDING_INVALID");
+    }
+    documentBindings.set(documentId, fileId);
+    fileBindings.set(fileId, documentId);
+  }
 
   validateRows(
     row.statements,
@@ -133,16 +176,17 @@ export function validateSummaryRow(row, event) {
       ["account_last_four", { max: 4 }],
       ["statement_start_date", { max: 10 }],
       ["statement_end_date", { max: 10 }],
-      ["deposits", { max: 80 }],
-      ["deposit_count", "count"],
-      ["true_revenue", { max: 80 }],
-      ["withdrawals", { max: 80 }],
-      ["negative_ending_days", "count"],
-      ["average_daily_balance", { max: 80 }],
+      ["deposits", { type: "decimal", requiredReady: true }],
+      ["deposit_count", { type: "count", requiredReady: true }],
+      ["true_revenue", { type: "decimal", requiredReady: true }],
+      ["withdrawals", { type: "decimal", requiredReady: true }],
+      ["negative_ending_days", { type: "count", requiredReady: true }],
+      ["average_daily_balance", { type: "decimal", requiredReady: true }],
       ["mca_detected", { max: 16 }],
       ["quality_status", { max: 32 }],
     ],
     "STATEMENT",
+    event.status,
   );
   validateRows(
     row.mca_deposits,
@@ -150,11 +194,12 @@ export function validateSummaryRow(row, event) {
       ["account_last_four", { max: 4 }],
       ["lender", { nullable: false, max: 512 }],
       ["deposit_date", { max: 10 }],
-      ["amount", { max: 80 }],
+      ["amount", { type: "decimal", requiredReady: true }],
       ["statement_start_date", { max: 10 }],
       ["statement_end_date", { max: 10 }],
     ],
     "MCA_DEPOSIT",
+    event.status,
   );
   validateRows(
     row.debt_accounts,
@@ -164,15 +209,17 @@ export function validateSummaryRow(row, event) {
       ["first_payment_date", { max: 10 }],
       ["last_payment_date", { max: 10 }],
       ["status", { max: 32 }],
-      ["payments", "count"],
-      ["total_paid", { max: 80 }],
+      ["payments", { type: "count", requiredReady: true }],
+      ["total_paid", { type: "decimal", requiredReady: true }],
       ["frequency", { max: 32 }],
-      ["estimated_monthly", { max: 80 }],
+      ["estimated_monthly", { type: "decimal", requiredReady: true }],
     ],
     "DEBT_ACCOUNT",
+    event.status,
   );
   return {
     ...row,
+    pdf_source_sha256: row.pdf_source_sha256.toLowerCase(),
     summary_fingerprint: row.summary_fingerprint.toLowerCase(),
   };
 }
