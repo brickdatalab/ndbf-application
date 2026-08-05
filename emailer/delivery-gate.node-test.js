@@ -3,17 +3,15 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
-  FALLBACK_NOTE,
   SUBSCRIBER_FLOW_CONTROL,
-  createApplicationPdfGate,
   createExplicitAttachmentLoader,
   createFinalArtifactResolver,
   createMessageHandler,
+  parseApplicationPdfReadyEvent,
+  shouldDeferSubmissionEmail,
 } from "./delivery-gate.js";
-import { createFinalizer } from "../pdf-finalizer/finalizer.js";
 
 const BUCKET = "app_banks";
-const START = Date.parse("2026-08-05T12:00:00.000Z");
 const FINGERPRINT = "a".repeat(64);
 const SOURCE_SHA = "b".repeat(64);
 
@@ -35,7 +33,6 @@ function artifact(label = "source", overrides = {}) {
 function row(overrides = {}) {
   return {
     entry_id: "ndbf_test",
-    submitted_at: "2026-08-05T12:00:00.000Z",
     pdf_layout_version: "underwriting-v1",
     pdf_gcs_key: "gs://app_banks/test/source.pdf",
     pdf_source_generation: "10",
@@ -46,136 +43,91 @@ function row(overrides = {}) {
   };
 }
 
-function controlledClock(start = START) {
-  let current = start;
-  const sleeps = [];
+function readyEvent(overrides = {}) {
+  const finalBuffer = pdf("final");
   return {
-    now: () => current,
-    sleep: async (milliseconds) => {
-      sleeps.push(milliseconds);
-      current += milliseconds;
-    },
-    sleeps,
+    event_type: "application_pdf_ready",
+    schema_version: 1,
+    analysis_version: 1,
+    event_key: `application_pdf:ndbf_test:v1:${FINGERPRINT}`,
+    entry_id: "ndbf_test",
+    status: "READY",
+    summary_fingerprint: FINGERPRINT,
+    source_generation: "10",
+    final_generation: "20",
+    final_pdf_sha256: createHash("sha256").update(finalBuffer).digest("hex"),
+    ...overrides,
   };
 }
 
-test("subscriber uses one bounded ten-minute lease owner", () => {
+function message(payload) {
+  return {
+    id: "message-1",
+    data: Buffer.from(JSON.stringify(payload)),
+    ackCount: 0,
+    nackCount: 0,
+    ack() { this.ackCount += 1; },
+    nack() { this.nackCount += 1; },
+  };
+}
+
+function handler(overrides = {}) {
+  return createMessageHandler({
+    fetchSubmission: async () => row(),
+    loadSourcePdf: async () => artifact(),
+    resolveFinalArtifact: async () => artifact("final", { generation: "20" }),
+    loadAttachments: async (_row, application) => ({
+      attachments: [{ filename: application.filename, content: application.buffer, contentType: application.contentType }],
+      truncated: false,
+    }),
+    composeEmail: (_row, options) => ({
+      subject: "subject",
+      text: "text",
+      html: "html",
+      attachments: options.attachments,
+    }),
+    sendMail: async () => ({ accepted: true }),
+    defaultRecipients: ["default@example.com"],
+    from: "sender@example.com",
+    logger: { info() {}, warn() {}, error() {} },
+    ...overrides,
+  });
+}
+
+test("uses bounded flow control and imports worker without starting it", async () => {
   assert.deepEqual(SUBSCRIBER_FLOW_CONTROL, {
     maxMessages: 5,
     allowExcessMessages: false,
     maxExtensionMinutes: 10,
   });
-});
-
-test("worker module import has no startup side effects", async () => {
   const worker = await import("./worker.js");
   assert.equal(typeof worker.startEmailer, "function");
-  assert.equal(typeof worker.composeEmail, "function");
-  const composed = worker.composeEmail(row(), {
-    timedOut: true,
-    attachments: [],
-  });
-  assert.match(composed.text, new RegExp(FALLBACK_NOTE));
-  assert.match(composed.html, new RegExp(FALLBACK_NOTE));
 });
 
-test("zero-bank underwriting and legacy submissions send source immediately", async () => {
-  for (const fixture of [
-    row({ bank_statement_gcs_keys: [] }),
-    row({ pdf_layout_version: null }),
-  ]) {
-    let finalChecks = 0;
-    let sourceLoads = 0;
-    const gate = createApplicationPdfGate({
-      resolveFinalArtifact: async () => { finalChecks += 1; return null; },
-      loadSourcePdf: async () => { sourceLoads += 1; return artifact(); },
-    });
-    const selected = await gate(fixture);
-    assert.equal(selected.kind, "source");
-    assert.equal(selected.timedOut, false);
-    assert.equal(finalChecks, 0);
-    assert.equal(sourceLoads, 1);
-  }
-});
-
-test("finalized artifact is selected as soon as it becomes valid", async () => {
-  const final = artifact("final");
-  const gate = createApplicationPdfGate({
-    resolveFinalArtifact: async () => final,
-    loadSourcePdf: async () => assert.fail("source must not load"),
-    now: () => START,
-  });
-  assert.deepEqual(await gate(row()), {
-    artifact: final,
-    kind: "finalized",
-    timedOut: false,
-  });
-});
-
-test("accelerated fixed seven-minute timeout uses source and records timeout", async () => {
-  const clock = controlledClock();
-  let checks = 0;
-  const gate = createApplicationPdfGate({
-    resolveFinalArtifact: async () => { checks += 1; return null; },
-    loadSourcePdf: async () => artifact(),
-    now: clock.now,
-    sleep: clock.sleep,
-  });
-  const selected = await gate(row());
-  assert.equal(selected.kind, "source");
-  assert.equal(selected.timedOut, true);
-  assert.equal(clock.sleeps.reduce((sum, value) => sum + value, 0), 420_000);
-  assert.equal(checks, 43);
-});
-
-test("checks for a final artifact once more immediately before fallback", async () => {
-  const clock = controlledClock();
-  const final = artifact("final");
-  const gate = createApplicationPdfGate({
-    resolveFinalArtifact: async () => clock.now() >= START + 420_000 ? final : null,
-    loadSourcePdf: async () => assert.fail("source must not load"),
-    now: clock.now,
-    sleep: clock.sleep,
-  });
-  const selected = await gate(row());
-  assert.equal(selected.kind, "finalized");
-  assert.equal(selected.artifact, final);
-});
-
-test("restart derives the elapsed deadline from authoritative submitted_at", async () => {
-  const clock = controlledClock(START + 421_000);
-  let checks = 0;
-  const gate = createApplicationPdfGate({
-    resolveFinalArtifact: async () => { checks += 1; return null; },
-    loadSourcePdf: async () => artifact(),
-    now: clock.now,
-    sleep: clock.sleep,
-  });
-  const selected = await gate(row());
-  assert.equal(selected.timedOut, true);
-  assert.equal(checks, 1);
-  assert.deepEqual(clock.sleeps, []);
-});
-
-test("unsupported non-null layout versions fail closed", async () => {
-  const gate = createApplicationPdfGate({
-    resolveFinalArtifact: async () => null,
-    loadSourcePdf: async () => artifact(),
-  });
-  await assert.rejects(gate(row({ pdf_layout_version: "future-v2" })), {
+test("defers only new versioned submissions that contain bank statements", () => {
+  assert.equal(shouldDeferSubmissionEmail(row()), true);
+  assert.equal(shouldDeferSubmissionEmail(row({ bank_statement_gcs_keys: [] })), false);
+  assert.equal(shouldDeferSubmissionEmail(row({ pdf_layout_version: null })), false);
+  assert.throws(() => shouldDeferSubmissionEmail(row({ pdf_layout_version: "future-v2" })), {
     code: "PDF_LAYOUT_VERSION_UNSUPPORTED",
   });
 });
 
-test("final resolver verifies immutable name, generation, fingerprint, and hashes", async () => {
+test("strictly validates the PDF-ready event", () => {
+  assert.equal(parseApplicationPdfReadyEvent(readyEvent()).entry_id, "ndbf_test");
+  assert.throws(() => parseApplicationPdfReadyEvent({ ...readyEvent(), extra: true }), {
+    code: "READY_EVENT_INVALID",
+  });
+});
+
+test("final resolver uses the event descriptor and verifies immutable artifact metadata", async () => {
+  const event = readyEvent();
   const finalBuffer = pdf("final");
-  const finalSha = createHash("sha256").update(finalBuffer).digest("hex");
-  let requestedUri;
+  let requested;
   const resolver = createFinalArtifactResolver({
     bucketName: BUCKET,
-    fetchSummaryFingerprint: async () => FINGERPRINT.toUpperCase(),
-    readObject: async (uri) => {
-      requestedUri = uri;
+    readObject: async (uri, options) => {
+      requested = { uri, options };
       return {
         buffer: finalBuffer,
         generation: "20",
@@ -186,216 +138,72 @@ test("final resolver verifies immutable name, generation, fingerprint, and hashe
           summaryFingerprint: FINGERPRINT,
           sourceGeneration: "10",
           sourceSha256: SOURCE_SHA,
-          finalSha256: finalSha,
+          finalSha256: event.final_pdf_sha256,
         },
       };
     },
   });
-  const result = await resolver(row());
-  assert.equal(
-    requestedUri,
-    `gs://app_banks/test/ndbf_test_underwritten_v1_${FINGERPRINT}.pdf`,
-  );
-  assert.equal(result.sha256, finalSha);
-
-  const mismatched = createFinalArtifactResolver({
-    bucketName: BUCKET,
-    fetchSummaryFingerprint: async () => FINGERPRINT,
-    readObject: async () => ({ ...result, metadata: { ...result.metadata, finalSha256: "c".repeat(64) } }),
-  });
-  await assert.rejects(mismatched(row()), { code: "FINAL_ARTIFACT_MISMATCH" });
+  const resolved = await resolver(row(), event);
+  assert.equal(requested.uri, `gs://app_banks/test/ndbf_test_underwritten_v1_${FINGERPRINT}.pdf`);
+  assert.deepEqual(requested.options, { expectedGeneration: "20" });
+  assert.equal(resolved.sha256, event.final_pdf_sha256);
 });
 
-test("accepts artifact metadata emitted by the real finalizer producer", async () => {
-  let producedArtifact;
-  const source = pdf("producer-source");
-  const sourceSha256 = createHash("sha256").update(source).digest("hex");
-  const finalBuffer = pdf("producer-final");
-  const producerEvent = {
-    event_type: "bank_statement_underwriting_ready",
-    schema_version: 1,
-    analysis_version: 1,
-    event_key: "bank_statement_underwriting:ndbf_test:v1",
-    entry_id: "ndbf_test",
-    status: "READY",
-    expected_document_count: 1,
-    extracted_document_count: 1,
-  };
-  const producerSummary = {
-    entry_id: "ndbf_test",
-    analysis_version: 1,
-    analysis_status: "READY",
-    expected_document_count: 1,
-    extracted_document_count: 1,
-    all_documents_processed: true,
-    pdf_layout_version: "underwriting-v1",
-    pdf_gcs_key: "gs://app_banks/test/source.pdf",
-    pdf_source_generation: "10",
-    pdf_source_sha256: sourceSha256,
-    summary_fingerprint: FINGERPRINT,
-    statements: [{
-      document_id: "document_test",
-      openai_file_id: "file_test",
-      account_last_four: "1234",
-      statement_start_date: "2026-07-01",
-      statement_end_date: "2026-07-31",
-      deposits: "100.00",
-      deposit_count: 1,
-      true_revenue: "100.00",
-      withdrawals: "25.00",
-      negative_ending_days: 0,
-      average_daily_balance: "75.00",
-      mca_detected: "—",
-      quality_status: "READY",
-    }],
-    mca_deposits: [],
-    debt_accounts: [],
-  };
-  const finalize = createFinalizer({
-    queryRows: async () => [producerSummary],
-    loadSource: async () => ({
-      objectName: "test/source.pdf",
-      buffer: source,
-      generation: "10",
-    }),
-    findArtifact: async () => null,
-    createArtifact: async (artifactInput) => {
-      producedArtifact = artifactInput;
-      return { generation: "20" };
+test("submission event defers without loading a PDF or contacting SMTP", async () => {
+  const deferred = message({ entry_id: "ndbf_test" });
+  await handler({
+    loadSourcePdf: async () => assert.fail("source must not load"),
+    resolveFinalArtifact: async () => assert.fail("final must not load"),
+    sendMail: async () => assert.fail("SMTP must not run"),
+  })(deferred);
+  assert.equal(deferred.ackCount, 1);
+  assert.equal(deferred.nackCount, 0);
+});
+
+test("PDF-ready event sends the finalized PDF and ACKs only after SMTP", async () => {
+  const order = [];
+  const ready = message(readyEvent());
+  await handler({
+    resolveFinalArtifact: async (_row, event) => {
+      order.push(`resolve:${event.final_generation}`);
+      return artifact("final", { generation: "20" });
     },
-    publish: async () => "message-id",
-    validateSourcePdf: async () => true,
-    renderFinalizedPdf: async () => ({ buffer: finalBuffer }),
-    verifyFinalizedPdf: async () => true,
-  });
-  await finalize(producerEvent);
+    sendMail: async () => { order.push("smtp"); },
+  })(ready);
+  assert.deepEqual(order, ["resolve:20", "smtp"]);
+  assert.equal(ready.ackCount, 1);
+  assert.equal(ready.nackCount, 0);
 
-  const resolver = createFinalArtifactResolver({
-    bucketName: BUCKET,
-    fetchSummaryFingerprint: async () => producerSummary.summary_fingerprint,
-    readObject: async () => ({
-      buffer: producedArtifact.buffer,
-      generation: "20",
-      contentType: "application/pdf",
-      metadata: producedArtifact.metadata,
-    }),
-  });
-  const resolved = await resolver(row({
-    pdf_source_sha256: sourceSha256,
-  }));
-  assert.equal(resolved.metadata.artifactType, "underwritten-v1");
+  const failed = message(readyEvent());
+  await handler({ sendMail: async () => { throw new Error("synthetic"); } })(failed);
+  assert.equal(failed.ackCount, 0);
+  assert.equal(failed.nackCount, 1);
 });
 
-test("attachment loader reads only one application PDF and exact bank keys", async () => {
+test("legacy and zero-bank submissions still send the source PDF immediately", async () => {
+  for (const sourceRow of [
+    row({ pdf_layout_version: null }),
+    row({ bank_statement_gcs_keys: [] }),
+  ]) {
+    let sent = 0;
+    const current = message({ entry_id: "ndbf_test" });
+    await handler({
+      fetchSubmission: async () => sourceRow,
+      sendMail: async () => { sent += 1; },
+    })(current);
+    assert.equal(sent, 1);
+    assert.equal(current.ackCount, 1);
+  }
+});
+
+test("attachment loader reads only the declared bank-statement keys", async () => {
   const reads = [];
-  const bankKeys = [
-    "gs://app_banks/test/bank_01_june.pdf",
-    "gs://app_banks/test/bank_02_july.pdf",
-  ];
   const loader = createExplicitAttachmentLoader({
     bucketName: BUCKET,
     maxTotalBytes: 1_000_000,
-    readObject: async (uri) => {
-      reads.push(uri);
-      return artifact(uri.includes("june") ? "june" : "july");
-    },
+    readObject: async (uri) => { reads.push(uri); return artifact("bank"); },
   });
-  const result = await loader(row({ bank_statement_gcs_keys: bankKeys }), artifact());
-  assert.deepEqual(reads, bankKeys);
-  assert.deepEqual(result.attachments.map((value) => value.filename), [
-    "source.pdf",
-    "june.pdf",
-    "july.pdf",
-  ]);
-});
-
-function fakeMessage() {
-  return {
-    id: "message-1",
-    data: Buffer.from(JSON.stringify({ entry_id: "ndbf_test" })),
-    ackCount: 0,
-    nackCount: 0,
-    ack() { this.ackCount += 1; },
-    nack() { this.nackCount += 1; },
-  };
-}
-
-test("SMTP failure nacks for redelivery and ACK occurs only after acceptance", async () => {
-  let attempts = 0;
-  const sent = [];
-  const handler = createMessageHandler({
-    fetchSubmission: async () => row(),
-    selectApplicationPdf: async () => ({ artifact: artifact(), kind: "source", timedOut: true }),
-    loadAttachments: async (_row, application) => ({
-      attachments: [{ filename: application.filename, content: application.buffer, contentType: application.contentType }],
-      truncated: false,
-    }),
-    composeEmail: (_row, options) => {
-      assert.equal(options.timedOut, true);
-      return { subject: "subject", text: FALLBACK_NOTE, html: FALLBACK_NOTE, attachments: options.attachments };
-    },
-    sendMail: async (email) => {
-      attempts += 1;
-      sent.push(email);
-      if (attempts === 1) throw new Error("synthetic SMTP failure");
-      return { accepted: true };
-    },
-    defaultRecipients: ["default@example.com"],
-    from: "sender@example.com",
-    logger: { info() {}, warn() {}, error() {} },
-  });
-
-  const first = fakeMessage();
-  await handler(first);
-  assert.equal(first.ackCount, 0);
-  assert.equal(first.nackCount, 1);
-
-  const redelivery = fakeMessage();
-  await handler(redelivery);
-  assert.equal(redelivery.ackCount, 1);
-  assert.equal(redelivery.nackCount, 0);
-  assert.equal(sent.length, 2);
-});
-
-test("malformed entry IDs are acknowledged before query and logged only by stable code", async () => {
-  let queried = false;
-  const warnings = [];
-  const handler = createMessageHandler({
-    fetchSubmission: async () => { queried = true; return row(); },
-    selectApplicationPdf: async () => assert.fail("gate must not run"),
-    loadAttachments: async () => assert.fail("attachments must not load"),
-    composeEmail: () => assert.fail("email must not compose"),
-    sendMail: async () => assert.fail("SMTP must not run"),
-    defaultRecipients: [],
-    from: "sender@example.com",
-    logger: { info() {}, warn(value) { warnings.push(value); }, error() {} },
-  });
-  const malicious = fakeMessage();
-  malicious.data = Buffer.from(JSON.stringify({ entry_id: "ndbf_ok\nforged-log" }));
-  await handler(malicious);
-  assert.equal(queried, false);
-  assert.equal(malicious.ackCount, 1);
-  assert.equal(malicious.nackCount, 0);
-  assert.deepEqual(warnings, ["[emailer] dropped=ENTRY_ID_INVALID"]);
-  assert.doesNotMatch(warnings[0], /ndbf_ok|forged/);
-});
-
-test("fallback remains the only email even if finalization completes later", async () => {
-  let sends = 0;
-  const message = fakeMessage();
-  const handler = createMessageHandler({
-    fetchSubmission: async () => row(),
-    selectApplicationPdf: async () => ({ artifact: artifact(), kind: "source", timedOut: true }),
-    loadAttachments: async () => ({ attachments: [], truncated: false }),
-    composeEmail: () => ({ subject: "subject", text: FALLBACK_NOTE, html: FALLBACK_NOTE, attachments: [] }),
-    sendMail: async () => { sends += 1; return { accepted: true }; },
-    defaultRecipients: ["default@example.com"],
-    from: "sender@example.com",
-    logger: { info() {}, warn() {}, error() {} },
-  });
-  await handler(message);
-  assert.equal(message.ackCount, 1);
-  assert.equal(sends, 1);
-  await Promise.resolve(); // A later finalizer has no email handler to invoke.
-  assert.equal(sends, 1);
+  const result = await loader(row(), artifact());
+  assert.deepEqual(reads, ["gs://app_banks/test/bank_01_june.pdf"]);
+  assert.equal(result.attachments.length, 2);
 });

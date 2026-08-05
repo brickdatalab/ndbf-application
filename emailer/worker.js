@@ -1,8 +1,8 @@
 // NDBF email worker.
 //
-// Subscribes to the `submission-completed` Pub/Sub topic. For each message:
+// Subscribes to the submission and finalized-PDF Pub/Sub topics. For each message:
 //   1. Fetches the BigQuery row by entry_id.
-//   2. Selects the validated finalized PDF or the deadline-safe source PDF.
+//   2. Defers versioned bank-statement submissions until the finalized-PDF event.
 //   3. Composes an email with every form field unredacted (phone + email shown
 //      in full) and attaches only the declared PDF + bank statement objects.
 //   4. Sends via Gmail SMTP (App Password auth) to the recipients in EMAIL_TO.
@@ -17,9 +17,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 import nodemailer from "nodemailer";
 import { pathToFileURL } from "node:url";
 import {
-  FALLBACK_NOTE,
   SUBSCRIBER_FLOW_CONTROL,
-  createApplicationPdfGate,
   createExplicitAttachmentLoader,
   createFinalArtifactResolver,
   createMessageHandler,
@@ -33,7 +31,9 @@ const PROJECT_ID = process.env.PROJECT_ID || "lithe-hallway-493420-r4";
 const BUCKET_NAME = process.env.BUCKET_NAME || "app_banks";
 const BQ_DATASET = process.env.BQ_DATASET || "ndbf_applications";
 const BQ_TABLE = process.env.BQ_TABLE || "submissions";
-const SUBSCRIPTION = process.env.SUBSCRIPTION || "submission-completed-emailer";
+const SUBMISSION_SUBSCRIPTION = process.env.SUBSCRIPTION || "submission-completed-emailer";
+const PDF_READY_SUBSCRIPTION =
+  process.env.PDF_READY_EMAIL_SUBSCRIPTION || "application-pdf-ready-emailer";
 
 const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
@@ -134,25 +134,6 @@ async function fetchBqRow(bigquery, entryId) {
   return rows[0] || null;
 }
 
-async function fetchSummaryFingerprint(bigquery, entryId) {
-  const sql = `
-    SELECT summary_fingerprint
-    FROM \`${PROJECT_ID}.${BQ_DATASET}.application_pdf_underwriting_summary\`
-    WHERE entry_id = @entry_id
-    LIMIT 2
-  `;
-  const [rows] = await bigquery.query({
-    query: sql,
-    params: { entry_id: entryId },
-    types: { entry_id: "STRING" },
-    useLegacySql: false,
-  });
-  if (!Array.isArray(rows) || rows.length > 1) {
-    throw new Error("SUMMARY_ROW_COUNT_INVALID");
-  }
-  return rows.length === 1 ? rows[0].summary_fingerprint : null;
-}
-
 function isNotFound(error) {
   return error?.code === 404;
 }
@@ -192,7 +173,7 @@ async function readObject(bucket, uri, { expectedGeneration, allowNotFound = fal
  */
 export function composeEmail(
   row,
-  { timedOut = false, truncated = false, attachments = [] } = {},
+  { truncated = false, attachments = [] } = {},
 ) {
   const businessName = strOrDash(row.business_legal_name);
   const dateStr = shortDate(row.submitted_at);
@@ -327,7 +308,6 @@ export function composeEmail(
       <div style="font-size:12px;opacity:.8;margin-top:4px;">Entry ${escapeHtml(row.entry_id)} · ${escapeHtml(fmtBQDateTime(row.submitted_at))}</div>
     </div>
     ${htmlGroups}
-    ${timedOut ? `<div style="margin-top:18px;padding:10px 12px;background:#FFF7E6;border-left:3px solid #D48A00;font-size:12px;color:#5C4300;">${escapeHtml(FALLBACK_NOTE)}</div>` : ""}
     <div style="margin-top:28px;padding-top:14px;border-top:1px solid #E6E6E6;font-size:11px;color:#888;">
       Attachments: application PDF + uploaded bank statements.
       Files also stored at <code>gs://${BUCKET_NAME}/${escapeHtml(row.gcs_folder?.replace(/^gs:\/\/[^/]+\//, "") || "")}/</code>.
@@ -336,7 +316,6 @@ export function composeEmail(
 </body></html>`;
 
   const notes = [];
-  if (timedOut) notes.push(FALLBACK_NOTE);
   if (truncated) {
     notes.push("Internal note: one or more bank statements exceeded the email attachment limit and remain stored in GCS.");
   }
@@ -368,16 +347,11 @@ export function startEmailer({
   const readGcsObject = (uri, options) => readObject(bucket, uri, options);
   const resolveFinalArtifact = createFinalArtifactResolver({
     bucketName: BUCKET_NAME,
-    fetchSummaryFingerprint: (entryId) => fetchSummaryFingerprint(bigquery, entryId),
     readObject: readGcsObject,
   });
   const loadSourcePdf = createSourcePdfLoader({
     bucketName: BUCKET_NAME,
     readObject: readGcsObject,
-  });
-  const selectApplicationPdf = createApplicationPdfGate({
-    resolveFinalArtifact,
-    loadSourcePdf,
   });
   const loadAttachments = createExplicitAttachmentLoader({
     bucketName: BUCKET_NAME,
@@ -386,7 +360,8 @@ export function startEmailer({
   });
   const handleMessage = createMessageHandler({
     fetchSubmission: (entryId) => fetchBqRow(bigquery, entryId),
-    selectApplicationPdf,
+    loadSourcePdf,
+    resolveFinalArtifact,
     loadAttachments,
     composeEmail,
     sendMail: (email) => transporter.sendMail(email),
@@ -394,24 +369,28 @@ export function startEmailer({
     from: FROM,
     logger,
   });
-  const subscription = pubsub.subscription(SUBSCRIPTION, {
-    flowControl: SUBSCRIBER_FLOW_CONTROL,
-  });
-  logger.info(
-    `[emailer] starting subscription=${SUBSCRIPTION} project=${PROJECT_ID} smtp=${SMTP_HOST}:${SMTP_PORT} recipient_count=${EMAIL_TO.length}`,
+  const subscriptions = [SUBMISSION_SUBSCRIPTION, PDF_READY_SUBSCRIPTION].map(
+    (name) => pubsub.subscription(name, { flowControl: SUBSCRIBER_FLOW_CONTROL }),
   );
-  subscription.on("message", handleMessage);
-  subscription.on("error", () => logger.error("[emailer] subscription_error"));
-  return { subscription, handleMessage };
+  logger.info(
+    `[emailer] starting subscriptions=${SUBMISSION_SUBSCRIPTION},${PDF_READY_SUBSCRIPTION} project=${PROJECT_ID} smtp=${SMTP_HOST}:${SMTP_PORT} recipient_count=${EMAIL_TO.length}`,
+  );
+  for (const subscription of subscriptions) {
+    subscription.on("message", handleMessage);
+    subscription.on("error", () => logger.error("[emailer] subscription_error"));
+  }
+  return { subscriptions, handleMessage };
 }
 
-const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+const isMain =
+  process.env.pm_id !== undefined ||
+  (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url);
 if (isMain) {
   try {
-    const { subscription } = startEmailer();
+    const { subscriptions } = startEmailer();
     process.on("SIGINT", async () => {
-      console.log("[emailer] SIGINT — closing subscription");
-      await subscription.close();
+      console.log("[emailer] SIGINT — closing subscriptions");
+      await Promise.all(subscriptions.map((subscription) => subscription.close()));
       process.exit(0);
     });
   } catch (error) {

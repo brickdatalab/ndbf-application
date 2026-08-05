@@ -78,15 +78,42 @@ test("strictly validates events while acknowledging irrelevant legacy events", (
   );
 });
 
-test("queries the joined read model once with an entry_id parameter", async () => {
-  let queryOptions;
+test("queries the existing underwriting views directly with one entry_id parameter", async () => {
+  const queryOptions = [];
+  const fixture = summaryRow();
   const adapters = createProductionAdapters({
     projectId: "sandbox-project",
     datasetId: "ndbf_pdf_test_20260805",
     bigquery: {
       query: async (options) => {
-        queryOptions = options;
-        return [[{ entry_id: ENTRY_ID }]];
+        queryOptions.push(options);
+        if (options.query.includes("submission_underwriting_summary")) {
+          return [[{
+            entry_id: ENTRY_ID,
+            analysis_version: 1,
+            analysis_status: "READY",
+            expected_document_count: 1,
+            extracted_document_count: 1,
+            all_documents_processed: true,
+            pdf_gcs_key: fixture.pdf_gcs_key,
+            pdf_layout_version: fixture.pdf_layout_version,
+            pdf_source_generation: fixture.pdf_source_generation,
+            pdf_source_sha256: fixture.pdf_source_sha256,
+          }]];
+        }
+        if (options.query.includes("bank_statement_underwriting_summary")) {
+          return [[fixture.statements[0]]];
+        }
+        if (options.query.includes("bank_statement_transactions_classified")) {
+          return [[{
+            document_id: fixture.statements[0].document_id,
+            openai_file_id: fixture.statements[0].openai_file_id,
+            lender: fixture.mca_deposits[0].lender,
+            deposit_date: fixture.mca_deposits[0].deposit_date,
+            amount: fixture.mca_deposits[0].amount,
+          }]];
+        }
+        return [[fixture.debt_accounts[0]]];
       },
     },
     storage: { bucket: () => ({}) },
@@ -94,19 +121,19 @@ test("queries the joined read model once with an entry_id parameter", async () =
   });
   const rows = await adapters.queryRows(ENTRY_ID);
   assert.equal(rows.length, 1);
-  assert.equal(queryOptions.params.entry_id, ENTRY_ID);
-  assert.equal(queryOptions.types.entry_id, "STRING");
-  assert.match(queryOptions.query, /@entry_id/);
-  assert.doesNotMatch(queryOptions.query, new RegExp(ENTRY_ID));
-  assert.match(
-    queryOptions.query,
-    /`sandbox-project\.ndbf_pdf_test_20260805\.application_pdf_underwriting_summary`/,
-  );
-  assert.match(
-    queryOptions.query,
-    /`sandbox-project\.ndbf_pdf_test_20260805\.submissions`/,
-  );
-  assert.doesNotMatch(queryOptions.query, /lithe-hallway-493420-r4/);
+  assert.equal(queryOptions.length, 4);
+  for (const options of queryOptions) {
+    assert.equal(options.params.entry_id, ENTRY_ID);
+    assert.equal(options.types.entry_id, "STRING");
+    assert.match(options.query, /@entry_id/);
+    assert.doesNotMatch(options.query, new RegExp(ENTRY_ID));
+    assert.doesNotMatch(options.query, /application_pdf_underwriting_summary/);
+    assert.doesNotMatch(options.query, /lithe-hallway-493420-r4/);
+  }
+  assert.equal(rows[0].statements.length, 1);
+  assert.equal(rows[0].mca_deposits.length, 1);
+  assert.equal(rows[0].debt_accounts.length, 1);
+  assert.match(rows[0].summary_fingerprint, /^[a-f0-9]{64}$/);
 
   for (const invalid of [
     { projectId: "bad`project", datasetId: "safe_dataset" },

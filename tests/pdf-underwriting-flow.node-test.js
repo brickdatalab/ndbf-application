@@ -4,9 +4,8 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 import {
-  createApplicationPdfGate,
+  createFinalArtifactResolver,
   createMessageHandler as createEmailMessageHandler,
-  createSourcePdfLoader,
 } from "../emailer/delivery-gate.js";
 import { createFinalizer } from "../pdf-finalizer/finalizer.js";
 import {
@@ -125,15 +124,20 @@ test("synthetic source finalizes all three sections and replay is idempotent", a
   assert.equal(sha256(source), sourceHash);
 });
 
-test("accelerated email deadline falls back to the unchanged source without SMTP", async () => {
+test("submission email defers until the finalized-PDF event then sends once", async () => {
   const source = sourcePdf();
   const sourceHash = sha256(source);
-  const start = Date.parse("2026-08-05T12:00:00.000Z");
-  let now = start;
-  let finalChecks = 0;
+  const summary = summaryRow();
+  const finalized = await renderFinalizedPdf({
+    sourcePdf: source,
+    entryId: ENTRY_ID,
+    status: "READY",
+    summary,
+  });
+  const finalSha256 = sha256(finalized.buffer);
+  const summaryFingerprint = summary.summary_fingerprint.toLowerCase();
   const row = {
     entry_id: ENTRY_ID,
-    submitted_at: "2026-08-05T12:00:00.000Z",
     pdf_layout_version: "underwriting-v1",
     pdf_gcs_key: `gs://app_banks/synthetic_${ENTRY_ID}/source.pdf`,
     pdf_source_generation: "10",
@@ -143,33 +147,39 @@ test("accelerated email deadline falls back to the unchanged source without SMTP
     ],
     app_param: null,
   };
-  const loadSourcePdf = createSourcePdfLoader({
+  const pdfReadyEvent = {
+    event_type: "application_pdf_ready",
+    schema_version: 1,
+    analysis_version: 1,
+    event_key: `application_pdf:${ENTRY_ID}:v1:${summaryFingerprint}`,
+    entry_id: ENTRY_ID,
+    status: "READY",
+    summary_fingerprint: summaryFingerprint,
+    source_generation: "10",
+    final_generation: "20",
+    final_pdf_sha256: finalSha256,
+  };
+  const resolveFinalArtifact = createFinalArtifactResolver({
     bucketName: "app_banks",
     readObject: async () => ({
-      buffer: source,
-      generation: "10",
+      buffer: finalized.buffer,
+      generation: "20",
       contentType: "application/pdf",
-      metadata: {},
+      metadata: {
+        artifactType: "underwritten-v1",
+        entryId: ENTRY_ID,
+        summaryFingerprint,
+        sourceGeneration: "10",
+        sourceSha256: sourceHash,
+        finalSha256,
+      },
     }),
   });
-  const selectApplicationPdf = createApplicationPdfGate({
-    resolveFinalArtifact: async () => {
-      finalChecks += 1;
-      return null;
-    },
-    loadSourcePdf,
-    now: () => now,
-    sleep: async (milliseconds) => {
-      now += milliseconds;
-    },
-    waitMs: 5,
-    pollMs: 2,
-  });
   const sentAtBoundary = [];
-  let timedOut = false;
   const handleMessage = createEmailMessageHandler({
     fetchSubmission: async () => row,
-    selectApplicationPdf,
+    loadSourcePdf: async () => assert.fail("source must not be emailed"),
+    resolveFinalArtifact,
     loadAttachments: async (_row, application) => ({
       attachments: [{
         filename: application.filename,
@@ -179,11 +189,10 @@ test("accelerated email deadline falls back to the unchanged source without SMTP
       truncated: false,
     }),
     composeEmail: (_row, options) => {
-      timedOut = options.timedOut;
       return {
-        subject: "Synthetic fallback",
-        text: "Synthetic fallback",
-        html: "Synthetic fallback",
+        subject: "Synthetic finalized",
+        text: "Synthetic finalized",
+        html: "Synthetic finalized",
         attachments: options.attachments,
       };
     },
@@ -197,23 +206,27 @@ test("accelerated email deadline falls back to the unchanged source without SMTP
     from: "underwriting-test@example.invalid",
     logger: { info() {}, warn() {}, error() {} },
   });
-  const message = {
+  const message = (payload) => ({
     id: "synthetic-message",
-    data: Buffer.from(JSON.stringify({ entry_id: ENTRY_ID })),
+    data: Buffer.from(JSON.stringify(payload)),
     acked: false,
     nacked: false,
     ack() { this.acked = true; },
     nack() { this.nacked = true; },
-  };
+  });
 
-  await handleMessage(message);
-  assert.equal(message.acked, true);
-  assert.equal(message.nacked, false);
-  assert.equal(timedOut, true);
-  assert.equal(now - start, 5);
-  assert.equal(finalChecks, 4);
+  const initial = message({ entry_id: ENTRY_ID });
+  await handleMessage(initial);
+  assert.equal(initial.acked, true);
+  assert.equal(initial.nacked, false);
+  assert.equal(sentAtBoundary.length, 0);
+
+  const ready = message(pdfReadyEvent);
+  await handleMessage(ready);
+  assert.equal(ready.acked, true);
+  assert.equal(ready.nacked, false);
   assert.equal(sentAtBoundary.length, 1);
   assert.equal(sentAtBoundary[0].attachments.length, 1);
-  assert.equal(sha256(sentAtBoundary[0].attachments[0].content), sourceHash);
+  assert.equal(sha256(sentAtBoundary[0].attachments[0].content), finalSha256);
   assert.equal(sha256(source), sourceHash);
 });

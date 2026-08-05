@@ -48,6 +48,9 @@ export function startWorker({
   return subscription;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+const isMain =
+  process.env.pm_id !== undefined ||
+  (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]));
+if (isMain) {
   startWorker();
 }

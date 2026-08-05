@@ -198,16 +198,17 @@ gcloud pubsub subscriptions create bank-statement-underwriting-pdf-finalizer \
   --ack-deadline=600 \
   --message-retention-duration=7d \
   --expiration-period=never
-gcloud pubsub subscriptions create application-pdf-ready-monitor \
+gcloud pubsub subscriptions create application-pdf-ready-emailer \
   --topic=application-pdf-ready \
   --ack-deadline=60 \
   --message-retention-duration=7d \
   --expiration-period=never
 ```
 
-There is deliberately no PDF-ready email subscription. The existing
-`submission-completed-emailer` subscription remains the only email owner and
-polls for the immutable final artifact until its fixed deadline.
+For versioned submissions with bank statements, `submission-completed-emailer`
+defers without sending. `application-pdf-ready-emailer` sends only after the
+finalizer stores and publishes the completed PDF. There is no polling deadline
+or blank-PDF fallback.
 
 Deploy the self-contained finalizer to a timestamped release, atomically repoint
 `/opt/ndbf-pdf-finalizer`, then start it under PM2:

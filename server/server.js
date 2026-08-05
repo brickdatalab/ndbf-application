@@ -403,7 +403,10 @@ app.post(
 
 // ---------- Boot ----------
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+const isMain =
+  process.env.pm_id !== undefined ||
+  (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]));
+if (isMain) {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`ndbf-backend listening on :${PORT}`);
     console.log(`  project=${PROJECT_ID}`);

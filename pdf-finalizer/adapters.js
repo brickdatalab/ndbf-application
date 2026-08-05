@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { BigQuery } from "@google-cloud/bigquery";
 import { PubSub } from "@google-cloud/pubsub";
 import { Storage } from "@google-cloud/storage";
@@ -11,44 +13,171 @@ function requireIdentifier(value, pattern, code) {
   return identifier;
 }
 
-export function buildSummaryQuery({
+function identifiers({
   projectId = "lithe-hallway-493420-r4",
   datasetId = "ndbf_applications",
 } = {}) {
-  const project = requireIdentifier(
-    projectId,
-    PROJECT_ID_PATTERN,
-    "BIGQUERY_PROJECT_ID_INVALID",
-  );
-  const dataset = requireIdentifier(
-    datasetId,
-    DATASET_ID_PATTERN,
-    "BIGQUERY_DATASET_ID_INVALID",
-  );
-  return `
-  SELECT
-    summary.entry_id,
-    summary.analysis_version,
-    summary.analysis_status,
-    summary.expected_document_count,
-    summary.extracted_document_count,
-    summary.all_documents_processed,
-    summary.statements,
-    summary.mca_deposits,
-    summary.debt_accounts,
-    summary.summary_fingerprint,
-    source.pdf_gcs_key,
-    source.pdf_layout_version,
-    source.pdf_source_generation,
-    source.pdf_source_sha256
-  FROM \`${project}.${dataset}.application_pdf_underwriting_summary\` AS summary
-  JOIN \`${project}.${dataset}.submissions\` AS source
-    USING (entry_id)
-  WHERE summary.entry_id = @entry_id
-`;
+  return {
+    project: requireIdentifier(projectId, PROJECT_ID_PATTERN, "BIGQUERY_PROJECT_ID_INVALID"),
+    dataset: requireIdentifier(datasetId, DATASET_ID_PATTERN, "BIGQUERY_DATASET_ID_INVALID"),
+  };
 }
 
-export const SUMMARY_QUERY = buildSummaryQuery();
+export function buildSummaryQueries(options = {}) {
+  const { project, dataset } = identifiers(options);
+  return {
+    metadata: `
+      SELECT
+        summary.entry_id,
+        summary.analysis_version,
+        summary.analysis_status,
+        summary.expected_document_count,
+        summary.extracted_document_count,
+        summary.all_documents_processed,
+        source.pdf_gcs_key,
+        source.pdf_layout_version,
+        source.pdf_source_generation,
+        source.pdf_source_sha256
+      FROM \`${project}.${dataset}.submission_underwriting_summary\` AS summary
+      JOIN \`${project}.${dataset}.submissions\` AS source USING (entry_id)
+      WHERE summary.entry_id = @entry_id
+      LIMIT 2
+    `,
+    statements: `
+      SELECT
+        underwriting.document_id,
+        underwriting.document_index,
+        underwriting.openai_file_id,
+        REGEXP_EXTRACT(
+          REGEXP_REPLACE(COALESCE(calculated.statement.summary.account_number, ''), r'[^0-9]', ''),
+          r'([0-9]{4})$'
+        ) AS account_last_four,
+        CAST(underwriting.statement_start_date AS STRING) AS statement_start_date,
+        CAST(underwriting.statement_end_date AS STRING) AS statement_end_date,
+        CAST(underwriting.total_deposits AS STRING) AS deposits,
+        calculated.statement.summary.num_credits AS deposit_count,
+        CAST(underwriting.true_deposits AS STRING) AS true_revenue,
+        CAST(calculated.statement.summary.calculated_total_debits AS STRING) AS withdrawals,
+        underwriting.negative_balance_days AS negative_ending_days,
+        CAST(underwriting.average_daily_balance AS STRING) AS average_daily_balance,
+        CASE
+          WHEN ARRAY_LENGTH(underwriting.mca_positions) > 0 THEN 'Yes'
+          WHEN 'MCA_CANDIDATE_UNCONFIRMED' IN UNNEST(underwriting.quality_reasons) THEN 'Review'
+          ELSE '—'
+        END AS mca_detected,
+        underwriting.quality_status
+      FROM \`${project}.${dataset}.bank_statement_underwriting_summary\` AS underwriting
+      JOIN \`${project}.${dataset}.bank_statement_calculated\` AS calculated
+        USING (entry_id, document_id, document_index, openai_file_id)
+      WHERE underwriting.entry_id = @entry_id
+      ORDER BY underwriting.statement_start_date, underwriting.statement_end_date,
+        underwriting.document_index, underwriting.document_id
+    `,
+    deposits: `
+      SELECT
+        transactions.document_id,
+        transactions.openai_file_id,
+        transactions.canonical_counterparty AS lender,
+        CAST(transactions.transaction_date AS STRING) AS deposit_date,
+        CAST(transactions.amount AS STRING) AS amount
+      FROM \`${project}.${dataset}.bank_statement_transactions_classified\` AS transactions
+      WHERE transactions.entry_id = @entry_id
+        AND transactions.amount > 0
+        AND transactions.classification = 'MCA_FUNDING'
+        AND transactions.confidence = 'CONFIRMED'
+        AND transactions.paired_reversal_transaction_id IS NULL
+        AND NOT transactions.is_reversed_original
+        AND transactions.canonical_counterparty IS NOT NULL
+      ORDER BY transactions.transaction_date, transactions.document_index,
+        transactions.canonical_counterparty, transactions.amount, transactions.transaction_id
+    `,
+    debt: `
+      SELECT
+        positions.position_key,
+        positions.canonical_lender AS lender,
+        'Merchant Cash Advance' AS debt_type,
+        CAST(MIN(positions.first_payment_date) AS STRING) AS first_payment_date,
+        CAST(MAX(positions.last_payment_date) AS STRING) AS last_payment_date,
+        CASE
+          WHEN LOGICAL_OR(positions.position_review_required)
+            OR LOGICAL_OR(positions.position_confidence != 'CONFIRMED')
+            OR LOGICAL_OR(positions.status = 'CADENCE_UNCONFIRMED') THEN 'Review'
+          WHEN LOGICAL_OR(positions.status = 'CURRENT_PAYING') THEN 'Current'
+          WHEN LOGICAL_OR(positions.status = 'CURRENT_WITH_MISSES') THEN 'Current + misses'
+          ELSE 'Inactive'
+        END AS status,
+        SUM(positions.successful_payment_count) AS payments,
+        CAST(SUM(positions.total_paid) AS STRING) AS total_paid,
+        CASE ANY_VALUE(positions.frequency HAVING MAX positions.last_payment_date)
+          WHEN 'BUSINESS_DAILY' THEN 'Business daily'
+          WHEN 'WEEKLY' THEN 'Weekly'
+          WHEN 'BIWEEKLY' THEN 'Biweekly'
+          WHEN 'MONTHLY' THEN 'Monthly'
+          ELSE 'Unconfirmed'
+        END AS frequency,
+        CAST(CASE ANY_VALUE(positions.frequency HAVING MAX positions.last_payment_date)
+          WHEN 'BUSINESS_DAILY' THEN ROUND(MAX(positions.payment_amount) * NUMERIC '21.75', 2)
+          WHEN 'WEEKLY' THEN ROUND(MAX(positions.payment_amount) * NUMERIC '4.345', 2)
+          WHEN 'BIWEEKLY' THEN ROUND(MAX(positions.payment_amount) * NUMERIC '2.1725', 2)
+          WHEN 'MONTHLY' THEN ROUND(MAX(positions.payment_amount), 2)
+          ELSE NULL
+        END AS STRING) AS estimated_monthly
+      FROM \`${project}.${dataset}.bank_statement_mca_positions\` AS positions
+      WHERE positions.entry_id = @entry_id
+      GROUP BY positions.account_key, positions.position_key, positions.canonical_lender
+      ORDER BY MIN(positions.first_payment_date), MAX(positions.last_payment_date),
+        positions.canonical_lender, positions.position_key
+    `,
+  };
+}
+
+function fingerprint(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function mergeSummary(metadata, statements, deposits, debtAccounts) {
+  if (!metadata) return null;
+  const statementByDocument = new Map(
+    statements.map((statement) => [
+      `${statement.document_id}\u0000${statement.openai_file_id}`,
+      statement,
+    ]),
+  );
+  const mcaDeposits = deposits.map((deposit) => {
+    const statement = statementByDocument.get(
+      `${deposit.document_id}\u0000${deposit.openai_file_id}`,
+    );
+    return {
+      document_id: deposit.document_id,
+      openai_file_id: deposit.openai_file_id,
+      account_last_four: statement?.account_last_four ?? null,
+      lender: deposit.lender,
+      deposit_date: deposit.deposit_date,
+      amount: deposit.amount,
+      statement_start_date: statement?.statement_start_date ?? null,
+      statement_end_date: statement?.statement_end_date ?? null,
+    };
+  });
+  const displayed = {
+    entry_id: metadata.entry_id,
+    analysis_version: Number(metadata.analysis_version),
+    analysis_status: metadata.analysis_status,
+    expected_document_count: Number(metadata.expected_document_count),
+    extracted_document_count: Number(metadata.extracted_document_count),
+    all_documents_processed: metadata.all_documents_processed,
+    statements,
+    mca_deposits: mcaDeposits,
+    debt_accounts: debtAccounts,
+  };
+  return {
+    ...displayed,
+    summary_fingerprint: fingerprint(displayed),
+    pdf_gcs_key: metadata.pdf_gcs_key,
+    pdf_layout_version: metadata.pdf_layout_version,
+    pdf_source_generation: String(metadata.pdf_source_generation ?? ""),
+    pdf_source_sha256: String(metadata.pdf_source_sha256 ?? "").toLowerCase(),
+  };
+}
 
 function parseGsUri(uri, expectedBucket) {
   const match = String(uri ?? "").match(/^gs:\/\/([^/]+)\/(.+)$/);
@@ -75,39 +204,43 @@ export function createProductionAdapters({
   storage = new Storage({ projectId }),
   pubsub = new PubSub({ projectId }),
 } = {}) {
-  const summaryQuery = buildSummaryQuery({ projectId, datasetId });
+  const queries = buildSummaryQueries({ projectId, datasetId });
   const bucket = storage.bucket(bucketName);
   const readyTopic = pubsub.topic(readyTopicName);
+  const query = async (queryText, entryId) => {
+    const [rows] = await bigquery.query({
+      query: queryText,
+      params: { entry_id: entryId },
+      types: { entry_id: "STRING" },
+      useLegacySql: false,
+    });
+    return rows;
+  };
 
   return {
     async queryRows(entryId) {
-      const [rows] = await bigquery.query({
-        query: summaryQuery,
-        params: { entry_id: entryId },
-        types: { entry_id: "STRING" },
-        useLegacySql: false,
-      });
-      return rows;
+      const [metadataRows, statements, deposits, debtAccounts] = await Promise.all([
+        query(queries.metadata, entryId),
+        query(queries.statements, entryId),
+        query(queries.deposits, entryId),
+        query(queries.debt, entryId),
+      ]);
+      if (metadataRows.length > 1) return metadataRows;
+      const summary = mergeSummary(metadataRows[0], statements, deposits, debtAccounts);
+      return summary ? [summary] : [];
     },
 
     async loadSource(uri, expectedGeneration) {
       const { objectName } = parseGsUri(uri, bucketName);
       const generation = String(expectedGeneration ?? "");
-      if (!/^[0-9]+$/.test(generation)) {
-        throw new Error("GCS_SOURCE_GENERATION_INVALID");
-      }
+      if (!/^[0-9]+$/.test(generation)) throw new Error("GCS_SOURCE_GENERATION_INVALID");
       const pinned = bucket.file(objectName, { generation });
       const [buffer] = await pinned.download({ validation: "crc32c" });
       const [verifiedMetadata] = await pinned.getMetadata();
       if (String(verifiedMetadata.generation ?? "") !== generation) {
         throw new Error("GCS_SOURCE_GENERATION_CHANGED");
       }
-      return {
-        objectName,
-        buffer,
-        generation,
-        metadata: customMetadata(verifiedMetadata),
-      };
+      return { objectName, buffer, generation, metadata: customMetadata(verifiedMetadata) };
     },
 
     async findArtifact(objectName) {
@@ -122,29 +255,16 @@ export function createProductionAdapters({
       const generation = String(metadata.generation ?? "");
       const pinned = bucket.file(objectName, { generation });
       const [buffer] = await pinned.download({ validation: "crc32c" });
-      return {
-        objectName,
-        buffer,
-        generation,
-        metadata: customMetadata(metadata),
-      };
+      return { objectName, buffer, generation, metadata: customMetadata(metadata) };
     },
 
-    async createArtifact({
-      objectName,
-      buffer,
-      metadata,
-      ifGenerationMatch,
-    }) {
+    async createArtifact({ objectName, buffer, metadata, ifGenerationMatch }) {
       const file = bucket.file(objectName);
       await file.save(buffer, {
         contentType: "application/pdf",
         resumable: false,
         validation: "crc32c",
-        metadata: {
-          cacheControl: "private, max-age=0, no-transform",
-          metadata,
-        },
+        metadata: { cacheControl: "private, max-age=0, no-transform", metadata },
         preconditionOpts: { ifGenerationMatch },
       });
       const [storedMetadata] = await file.getMetadata();
@@ -154,10 +274,7 @@ export function createProductionAdapters({
     async publish(event) {
       return readyTopic.publishMessage({
         json: event,
-        attributes: {
-          event_type: event.event_type,
-          schema_version: String(event.schema_version),
-        },
+        attributes: { event_type: event.event_type, schema_version: String(event.schema_version) },
       });
     },
   };

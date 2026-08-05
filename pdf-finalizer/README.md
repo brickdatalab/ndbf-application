@@ -3,6 +3,8 @@
 Consumes `bank_statement_underwriting_ready` events, validates the immutable
 signed source PDF, renders the authoritative BigQuery underwriting read model,
 stores a create-only finalized PDF, and then publishes `application_pdf_ready`.
+It reads the existing underwriting views directly; no additional aggregate
+BigQuery view is required.
 
 ```bash
 npm ci --omit=dev
@@ -52,10 +54,9 @@ Defaults:
 - BigQuery project: `PROJECT_ID` or `lithe-hallway-493420-r4`
 - BigQuery dataset: `BQ_DATASET` or `ndbf_applications`
 
-The input subscription is attached to `bank-statement-underwriting-ready`. The
-output topic has the retained `application-pdf-ready-monitor` subscription for
-operations evidence only. The emailer does not subscribe to either resource;
-`submission-completed-emailer` remains the sole email owner.
+The input subscription is attached to `bank-statement-underwriting-ready`.
+The emailer consumes the output through `application-pdf-ready-emailer` and
+sends only after the immutable completed PDF has been stored.
 
 For an isolated proof, point the exact worker at temporary resources through
 `PROJECT_ID`, `BQ_DATASET`, `BUCKET_NAME`, `PDF_FINALIZER_SUBSCRIPTION`, and
