@@ -16,6 +16,8 @@ export const FALLBACK_NOTE =
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const GENERATION_PATTERN = /^[0-9]+$/;
+const ENTRY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const FINAL_ARTIFACT_TYPE = "underwritten-v1";
 
 export class EmailerError extends Error {
   constructor(code, cause) {
@@ -65,7 +67,7 @@ export function finalizedPdfUri(row, fingerprint, bucketName) {
   const normalizedFingerprint = String(fingerprint ?? "").toLowerCase();
   if (
     !SHA256_PATTERN.test(normalizedFingerprint) ||
-    !/^[A-Za-z0-9_-]{1,128}$/.test(String(row.entry_id ?? ""))
+    !ENTRY_ID_PATTERN.test(String(row.entry_id ?? ""))
   ) {
     throw new EmailerError("FINAL_DESCRIPTOR_INVALID");
   }
@@ -108,7 +110,7 @@ export function createFinalArtifactResolver({
     const actualSha256 = sha256(object.buffer);
     const metadata = object.metadata ?? {};
     if (
-      metadata.artifactType !== PDF_LAYOUT_VERSION ||
+      metadata.artifactType !== FINAL_ARTIFACT_TYPE ||
       metadata.entryId !== row.entry_id ||
       String(metadata.summaryFingerprint ?? "").toLowerCase() !== fingerprint ||
       metadata.sourceGeneration !== sourceGeneration ||
@@ -264,13 +266,13 @@ export function createMessageHandler({
     try {
       payload = JSON.parse(message.data.toString());
     } catch {
-      logger.warn(`[emailer] msg=${messageId} dropped=PAYLOAD_JSON_INVALID`);
+      logger.warn("[emailer] dropped=PAYLOAD_JSON_INVALID");
       message.ack();
       return;
     }
     const entryId = payload?.entry_id;
-    if (typeof entryId !== "string" || !entryId) {
-      logger.warn(`[emailer] msg=${messageId} dropped=ENTRY_ID_MISSING`);
+    if (typeof entryId !== "string" || !ENTRY_ID_PATTERN.test(entryId)) {
+      logger.warn("[emailer] dropped=ENTRY_ID_INVALID");
       message.ack();
       return;
     }

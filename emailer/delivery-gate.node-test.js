@@ -10,6 +10,7 @@ import {
   createFinalArtifactResolver,
   createMessageHandler,
 } from "./delivery-gate.js";
+import { createFinalizer } from "../pdf-finalizer/finalizer.js";
 
 const BUCKET = "app_banks";
 const START = Date.parse("2026-08-05T12:00:00.000Z");
@@ -180,7 +181,7 @@ test("final resolver verifies immutable name, generation, fingerprint, and hashe
         generation: "20",
         contentType: "application/pdf",
         metadata: {
-          artifactType: "underwriting-v1",
+          artifactType: "underwritten-v1",
           entryId: "ndbf_test",
           summaryFingerprint: FINGERPRINT,
           sourceGeneration: "10",
@@ -203,6 +204,86 @@ test("final resolver verifies immutable name, generation, fingerprint, and hashe
     readObject: async () => ({ ...result, metadata: { ...result.metadata, finalSha256: "c".repeat(64) } }),
   });
   await assert.rejects(mismatched(row()), { code: "FINAL_ARTIFACT_MISMATCH" });
+});
+
+test("accepts artifact metadata emitted by the real finalizer producer", async () => {
+  let producedArtifact;
+  const source = pdf("producer-source");
+  const sourceSha256 = createHash("sha256").update(source).digest("hex");
+  const finalBuffer = pdf("producer-final");
+  const producerEvent = {
+    event_type: "bank_statement_underwriting_ready",
+    schema_version: 1,
+    analysis_version: 1,
+    event_key: "bank_statement_underwriting:ndbf_test:v1",
+    entry_id: "ndbf_test",
+    status: "READY",
+    expected_document_count: 1,
+    extracted_document_count: 1,
+  };
+  const producerSummary = {
+    entry_id: "ndbf_test",
+    analysis_version: 1,
+    analysis_status: "READY",
+    expected_document_count: 1,
+    extracted_document_count: 1,
+    all_documents_processed: true,
+    pdf_layout_version: "underwriting-v1",
+    pdf_gcs_key: "gs://app_banks/test/source.pdf",
+    pdf_source_generation: "10",
+    pdf_source_sha256: sourceSha256,
+    summary_fingerprint: FINGERPRINT,
+    statements: [{
+      document_id: "document_test",
+      openai_file_id: "file_test",
+      account_last_four: "1234",
+      statement_start_date: "2026-07-01",
+      statement_end_date: "2026-07-31",
+      deposits: "100.00",
+      deposit_count: 1,
+      true_revenue: "100.00",
+      withdrawals: "25.00",
+      negative_ending_days: 0,
+      average_daily_balance: "75.00",
+      mca_detected: "—",
+      quality_status: "READY",
+    }],
+    mca_deposits: [],
+    debt_accounts: [],
+  };
+  const finalize = createFinalizer({
+    queryRows: async () => [producerSummary],
+    loadSource: async () => ({
+      objectName: "test/source.pdf",
+      buffer: source,
+      generation: "10",
+    }),
+    findArtifact: async () => null,
+    createArtifact: async (artifactInput) => {
+      producedArtifact = artifactInput;
+      return { generation: "20" };
+    },
+    publish: async () => "message-id",
+    validateSourcePdf: async () => true,
+    renderFinalizedPdf: async () => ({ buffer: finalBuffer }),
+    verifyFinalizedPdf: async () => true,
+  });
+  await finalize(producerEvent);
+
+  const resolver = createFinalArtifactResolver({
+    bucketName: BUCKET,
+    fetchSummaryFingerprint: async () => producerSummary.summary_fingerprint,
+    readObject: async () => ({
+      buffer: producedArtifact.buffer,
+      generation: "20",
+      contentType: "application/pdf",
+      metadata: producedArtifact.metadata,
+    }),
+  });
+  const resolved = await resolver(row({
+    pdf_source_sha256: sourceSha256,
+  }));
+  assert.equal(resolved.metadata.artifactType, "underwritten-v1");
 });
 
 test("attachment loader reads only one application PDF and exact bank keys", async () => {
@@ -274,6 +355,29 @@ test("SMTP failure nacks for redelivery and ACK occurs only after acceptance", a
   assert.equal(redelivery.ackCount, 1);
   assert.equal(redelivery.nackCount, 0);
   assert.equal(sent.length, 2);
+});
+
+test("malformed entry IDs are acknowledged before query and logged only by stable code", async () => {
+  let queried = false;
+  const warnings = [];
+  const handler = createMessageHandler({
+    fetchSubmission: async () => { queried = true; return row(); },
+    selectApplicationPdf: async () => assert.fail("gate must not run"),
+    loadAttachments: async () => assert.fail("attachments must not load"),
+    composeEmail: () => assert.fail("email must not compose"),
+    sendMail: async () => assert.fail("SMTP must not run"),
+    defaultRecipients: [],
+    from: "sender@example.com",
+    logger: { info() {}, warn(value) { warnings.push(value); }, error() {} },
+  });
+  const malicious = fakeMessage();
+  malicious.data = Buffer.from(JSON.stringify({ entry_id: "ndbf_ok\nforged-log" }));
+  await handler(malicious);
+  assert.equal(queried, false);
+  assert.equal(malicious.ackCount, 1);
+  assert.equal(malicious.nackCount, 0);
+  assert.deepEqual(warnings, ["[emailer] dropped=ENTRY_ID_INVALID"]);
+  assert.doesNotMatch(warnings[0], /ndbf_ok|forged/);
 });
 
 test("fallback remains the only email even if finalization completes later", async () => {

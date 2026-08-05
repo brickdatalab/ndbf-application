@@ -51,3 +51,15 @@ Operational note: the clean npm install reports the dependency tree's existing
 UUID deprecation warning and 10 audit findings (9 moderate, 1 high). No
 dependency upgrades were made because they are outside this focused delivery
 gate and would change the production dependency surface.
+
+## Review fixes
+
+- Corrected final artifact validation to require the producer's exact
+  `artifactType: underwritten-v1` value rather than the source layout version.
+- Added a cross-module regression that runs the real finalizer producer and
+  passes its emitted artifact metadata through the emailer's resolver.
+- Enforced the shared opaque `entry_id` grammar before any query or identifier
+  logging. Malformed identifiers are acknowledged with only the stable
+  `ENTRY_ID_INVALID` code, preventing control-character log injection.
+- Emailer verification: 16 passed, 0 failed. Finalizer verification: 12 passed,
+  0 failed. Syntax and whitespace checks passed.
