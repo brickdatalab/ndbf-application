@@ -13,8 +13,9 @@ server.js (after BQ insert) ──publish──▶  Pub/Sub topic "submission-co
                                           Subscription "submission-completed-emailer"
                                             │
                                             ▼ (Pub/Sub pushes to subscriber)
-                                          worker.js  ─┬─▶  fetch BQ row
-                                                      ├─▶  list + download files from GCS folder
+                                          worker.js  ─┬─▶  fetch authoritative BQ row
+                                                      ├─▶  wait up to seven minutes for a valid finalized PDF
+                                                      ├─▶  load only the declared PDF and bank-statement keys
                                                       ├─▶  compose email (no clause, no signature)
                                                       └─▶  smtp.gmail.com:587
                                                             │
@@ -29,7 +30,9 @@ Pub/Sub retries up to 5 times with exponential backoff on `nack`. After 5 failur
 
 - **Subject:** `{Business Legal Name} - Submission - MM/DD/YYYY`
 - **Body:** every form field from BQ, **phone + email unredacted**. No clause, no signature image.
-- **Attachments:** the generated application PDF + every bank statement uploaded, as true file attachments. Total capped at ~24MB to stay under Gmail's 25MB limit; oversized statements are skipped with a note in the email body and remain available in GCS.
+- **Attachments:** exactly one application PDF plus only the bank-statement objects declared in `bank_statement_gcs_keys`; the worker never lists the submission folder. `underwriting-v1` submissions with statements wait a fixed seven minutes from authoritative `submitted_at` for the validated immutable final PDF, then fall back to the signed source PDF with an internal note. Legacy and zero-bank submissions send immediately. Total attachments remain capped at ~24MB; oversized statements are skipped with a note and remain in GCS.
+
+The original `submission-completed-emailer` message is the sole owner of delivery. Its ACK deadline is extended for at most ten minutes, and it is acknowledged only after SMTP accepts the message. A finalized PDF created after a timeout is retained in GCS and never triggers a second email.
 
 ## Environment variables (set in `pm2` ecosystem file or via systemd env)
 
@@ -51,7 +54,8 @@ Pub/Sub retries up to 5 times with exponential backoff on `nack`. After 5 failur
 
 ```bash
 # from your Mac, with the repo working tree
-scp -i ~/.ssh/approval-dept emailer/worker.js emailer/package.json \
+scp -i ~/.ssh/approval-dept emailer/worker.js emailer/delivery-gate.js \
+    emailer/recipient-routing.js emailer/package.json \
     vitolo@136.119.104.124:/opt/ndbf-emailer/
 
 ssh -i ~/.ssh/approval-dept vitolo@136.119.104.124 \

@@ -2,9 +2,9 @@
 //
 // Subscribes to the `submission-completed` Pub/Sub topic. For each message:
 //   1. Fetches the BigQuery row by entry_id.
-//   2. Lists all objects in the submission's GCS folder.
+//   2. Selects the validated finalized PDF or the deadline-safe source PDF.
 //   3. Composes an email with every form field unredacted (phone + email shown
-//      in full) and attaches the PDF + every bank statement file.
+//      in full) and attaches only the declared PDF + bank statement objects.
 //   4. Sends via Gmail SMTP (App Password auth) to the recipients in EMAIL_TO.
 //
 // This service is intentionally decoupled from the main backend — if it crashes
@@ -15,7 +15,17 @@ import { PubSub } from "@google-cloud/pubsub";
 import { Storage } from "@google-cloud/storage";
 import { BigQuery } from "@google-cloud/bigquery";
 import nodemailer from "nodemailer";
-import { resolveRecipients } from "./recipient-routing.js";
+import { pathToFileURL } from "node:url";
+import {
+  FALLBACK_NOTE,
+  SUBSCRIBER_FLOW_CONTROL,
+  createApplicationPdfGate,
+  createExplicitAttachmentLoader,
+  createFinalArtifactResolver,
+  createMessageHandler,
+  createSourcePdfLoader,
+  parseGsUri,
+} from "./delivery-gate.js";
 
 // ---------- Config ----------
 
@@ -40,28 +50,6 @@ const EMAIL_TO = (
   .filter(Boolean);
 
 const MAX_TOTAL_ATTACHMENT_BYTES = 24 * 1024 * 1024; // ~24MB safety margin under Gmail's 25MB cap
-
-if (!SMTP_USER || !SMTP_PASS) {
-  console.error("[emailer] FATAL: SMTP_USER and SMTP_PASS env vars are required");
-  process.exit(1);
-}
-
-// ---------- Clients ----------
-
-const pubsub = new PubSub({ projectId: PROJECT_ID });
-const subscription = pubsub.subscription(SUBSCRIPTION, {
-  flowControl: { maxMessages: 5 }, // process up to 5 in parallel
-});
-const storage = new Storage({ projectId: PROJECT_ID });
-const bucket = storage.bucket(BUCKET_NAME);
-const bigquery = new BigQuery({ projectId: PROJECT_ID });
-
-const transporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_PORT === 465,
-  auth: { user: SMTP_USER, pass: SMTP_PASS },
-});
 
 // ---------- Helpers ----------
 
@@ -131,7 +119,7 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
-async function fetchBqRow(entryId) {
+async function fetchBqRow(bigquery, entryId) {
   const sql = `
     SELECT *
     FROM \`${PROJECT_ID}.${BQ_DATASET}.${BQ_TABLE}\`
@@ -146,39 +134,66 @@ async function fetchBqRow(entryId) {
   return rows[0] || null;
 }
 
-/**
- * List every object in the submission's GCS folder. Returns
- * [{ name, prettyName, size, contentType }] sorted by name.
- */
-async function listFolderObjects(gcsFolder) {
-  // gcsFolder is the *bare* prefix like "smith-and-sons-llc_ndbf_xxx"
-  const prefix = gcsFolder.endsWith("/") ? gcsFolder : `${gcsFolder}/`;
-  const [files] = await bucket.getFiles({ prefix });
-  return files
-    .map((f) => {
-      const baseName = f.name.replace(prefix, "");
-      // Strip the "bank_NN_" prefix the backend adds, for nicer attachment names.
-      const prettyName = baseName.replace(/^bank_\d+_/, "");
-      return {
-        name: f.name,
-        prettyName,
-        size: Number(f.metadata?.size || 0),
-        contentType: f.metadata?.contentType || "application/octet-stream",
-        file: f,
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+async function fetchSummaryFingerprint(bigquery, entryId) {
+  const sql = `
+    SELECT summary_fingerprint
+    FROM \`${PROJECT_ID}.${BQ_DATASET}.application_pdf_underwriting_summary\`
+    WHERE entry_id = @entry_id
+    LIMIT 2
+  `;
+  const [rows] = await bigquery.query({
+    query: sql,
+    params: { entry_id: entryId },
+    types: { entry_id: "STRING" },
+    useLegacySql: false,
+  });
+  if (!Array.isArray(rows) || rows.length > 1) {
+    throw new Error("SUMMARY_ROW_COUNT_INVALID");
+  }
+  return rows.length === 1 ? rows[0].summary_fingerprint : null;
 }
 
-async function downloadFile(file) {
-  const [buf] = await file.download();
-  return buf;
+function isNotFound(error) {
+  return error?.code === 404;
+}
+
+async function readObject(bucket, uri, { expectedGeneration, allowNotFound = false } = {}) {
+  const { objectName } = parseGsUri(uri, BUCKET_NAME);
+  let generation = expectedGeneration ? String(expectedGeneration) : null;
+  try {
+    if (!generation) {
+      const [latestMetadata] = await bucket.file(objectName).getMetadata();
+      generation = String(latestMetadata.generation ?? "");
+    }
+    const pinned = bucket.file(objectName, { generation });
+    const [[buffer], [metadata]] = await Promise.all([
+      pinned.download({ validation: "crc32c" }),
+      pinned.getMetadata(),
+    ]);
+    if (String(metadata.generation ?? "") !== generation) {
+      throw new Error("GCS_GENERATION_CHANGED");
+    }
+    return {
+      uri,
+      objectName,
+      buffer,
+      generation,
+      contentType: metadata.contentType || "application/octet-stream",
+      metadata: metadata.metadata ?? {},
+    };
+  } catch (error) {
+    if (allowNotFound && isNotFound(error)) return null;
+    throw error;
+  }
 }
 
 /**
  * Build the email subject + body + attachments from a BigQuery row.
  */
-async function composeEmail(row) {
+export function composeEmail(
+  row,
+  { timedOut = false, truncated = false, attachments = [] } = {},
+) {
   const businessName = strOrDash(row.business_legal_name);
   const dateStr = shortDate(row.submitted_at);
   const subject = `${businessName} - Submission - ${dateStr}`;
@@ -312,6 +327,7 @@ async function composeEmail(row) {
       <div style="font-size:12px;opacity:.8;margin-top:4px;">Entry ${escapeHtml(row.entry_id)} · ${escapeHtml(fmtBQDateTime(row.submitted_at))}</div>
     </div>
     ${htmlGroups}
+    ${timedOut ? `<div style="margin-top:18px;padding:10px 12px;background:#FFF7E6;border-left:3px solid #D48A00;font-size:12px;color:#5C4300;">${escapeHtml(FALLBACK_NOTE)}</div>` : ""}
     <div style="margin-top:28px;padding-top:14px;border-top:1px solid #E6E6E6;font-size:11px;color:#888;">
       Attachments: application PDF + uploaded bank statements.
       Files also stored at <code>gs://${BUCKET_NAME}/${escapeHtml(row.gcs_folder?.replace(/^gs:\/\/[^/]+\//, "") || "")}/</code>.
@@ -319,123 +335,87 @@ async function composeEmail(row) {
   </div>
 </body></html>`;
 
-  // ---- Attachments ----
-  // gcs_folder in BQ looks like "gs://app_banks/biz-name_ndbf_xxx" — extract the prefix.
-  const folderPrefix =
-    row.gcs_folder?.replace(`gs://${BUCKET_NAME}/`, "") ||
-    null;
-
-  const attachments = [];
-  let totalBytes = 0;
-  let truncated = false;
-
-  if (folderPrefix) {
-    const objects = await listFolderObjects(folderPrefix);
-    for (const obj of objects) {
-      // Pre-check size to keep us under the SMTP cap.
-      if (totalBytes + obj.size > MAX_TOTAL_ATTACHMENT_BYTES) {
-        truncated = true;
-        console.warn(
-          `[emailer] skipping ${obj.name} (${obj.size}b) — would exceed ${MAX_TOTAL_ATTACHMENT_BYTES}b cap`
-        );
-        continue;
-      }
-      try {
-        const content = await downloadFile(obj.file);
-        attachments.push({
-          filename: obj.prettyName,
-          content,
-          contentType: obj.contentType,
-        });
-        totalBytes += obj.size;
-      } catch (err) {
-        console.error(`[emailer] failed to download ${obj.name}:`, err.message);
-      }
-    }
+  const notes = [];
+  if (timedOut) notes.push(FALLBACK_NOTE);
+  if (truncated) {
+    notes.push("Internal note: one or more bank statements exceeded the email attachment limit and remain stored in GCS.");
   }
-
-  const finalText = truncated
-    ? textParts.join("\n") +
-      `\n\n[Note: some attachments were too large to include. All files remain in gs://${BUCKET_NAME}/${folderPrefix}/ ]\n`
+  const finalText = notes.length
+    ? `${textParts.join("\n")}\n\n${notes.join("\n")}`
     : textParts.join("\n");
 
   return { subject, text: finalText, html, attachments };
 }
 
-// ---------- Message handler ----------
-
-async function handleMessage(message) {
-  const id = message.id;
-  let payload;
-  try {
-    payload = JSON.parse(message.data.toString());
-  } catch (err) {
-    console.error(`[emailer] msg=${id} unparseable JSON, dropping:`, err.message);
-    message.ack();
-    return;
-  }
-
-  const entryId = payload?.entry_id;
-  if (!entryId) {
-    console.error(`[emailer] msg=${id} payload missing entry_id, dropping:`, payload);
-    message.ack();
-    return;
-  }
-
-  console.log(`[emailer] msg=${id} entry=${entryId} fetching BQ row…`);
-
-  try {
-    const row = await fetchBqRow(entryId);
-    if (!row) {
-      // Row not yet visible (BQ streaming buffer can lag). Nack to retry shortly.
-      console.warn(`[emailer] msg=${id} entry=${entryId} not found in BQ yet — nack for retry`);
-      message.nack();
-      return;
-    }
-
-    const email = await composeEmail(row);
-
-    // Layer in any rep-specific extra recipients based on app_param, deduped.
-    const { appKey, extras, recipients } = resolveRecipients(EMAIL_TO, row.app_param);
-    if (extras.length) {
-      console.log(`[emailer] msg=${id} app_param=${appKey} adding extras=${extras.join(",")}`);
-    }
-
-    const info = await transporter.sendMail({
-      from: FROM,
-      to: recipients,
-      subject: email.subject,
-      text: email.text,
-      html: email.html,
-      attachments: email.attachments,
-    });
-
-    console.log(
-      `[emailer] msg=${id} entry=${entryId} sent ok messageId=${info.messageId} attachments=${email.attachments.length}`
-    );
-    message.ack();
-  } catch (err) {
-    console.error(`[emailer] msg=${id} entry=${entryId} ERROR:`, err.message);
-    // nack so Pub/Sub redelivers per the subscription policy.
-    message.nack();
-  }
-}
-
 // ---------- Boot ----------
 
-console.log(
-  `[emailer] starting subscription=${SUBSCRIPTION} project=${PROJECT_ID} ` +
-    `smtp=${SMTP_HOST}:${SMTP_PORT} from=${FROM} to=${EMAIL_TO.join(",")}`
-);
+export function startEmailer({
+  bigquery = new BigQuery({ projectId: PROJECT_ID }),
+  storage = new Storage({ projectId: PROJECT_ID }),
+  pubsub = new PubSub({ projectId: PROJECT_ID }),
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  }),
+  logger = console,
+} = {}) {
+  if (!SMTP_USER || !SMTP_PASS) {
+    throw new Error("SMTP_CONFIG_MISSING");
+  }
+  const bucket = storage.bucket(BUCKET_NAME);
+  const readGcsObject = (uri, options) => readObject(bucket, uri, options);
+  const resolveFinalArtifact = createFinalArtifactResolver({
+    bucketName: BUCKET_NAME,
+    fetchSummaryFingerprint: (entryId) => fetchSummaryFingerprint(bigquery, entryId),
+    readObject: readGcsObject,
+  });
+  const loadSourcePdf = createSourcePdfLoader({
+    bucketName: BUCKET_NAME,
+    readObject: readGcsObject,
+  });
+  const selectApplicationPdf = createApplicationPdfGate({
+    resolveFinalArtifact,
+    loadSourcePdf,
+  });
+  const loadAttachments = createExplicitAttachmentLoader({
+    bucketName: BUCKET_NAME,
+    readObject: readGcsObject,
+    maxTotalBytes: MAX_TOTAL_ATTACHMENT_BYTES,
+  });
+  const handleMessage = createMessageHandler({
+    fetchSubmission: (entryId) => fetchBqRow(bigquery, entryId),
+    selectApplicationPdf,
+    loadAttachments,
+    composeEmail,
+    sendMail: (email) => transporter.sendMail(email),
+    defaultRecipients: EMAIL_TO,
+    from: FROM,
+    logger,
+  });
+  const subscription = pubsub.subscription(SUBSCRIPTION, {
+    flowControl: SUBSCRIBER_FLOW_CONTROL,
+  });
+  logger.info(
+    `[emailer] starting subscription=${SUBSCRIPTION} project=${PROJECT_ID} smtp=${SMTP_HOST}:${SMTP_PORT} recipient_count=${EMAIL_TO.length}`,
+  );
+  subscription.on("message", handleMessage);
+  subscription.on("error", () => logger.error("[emailer] subscription_error"));
+  return { subscription, handleMessage };
+}
 
-subscription.on("message", handleMessage);
-subscription.on("error", (err) => {
-  console.error("[emailer] subscription error:", err);
-});
-
-// Keep the process alive (Pub/Sub keeps an open stream).
-process.on("SIGINT", async () => {
-  console.log("[emailer] SIGINT — closing subscription");
-  await subscription.close();
-  process.exit(0);
-});
+const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+if (isMain) {
+  try {
+    const { subscription } = startEmailer();
+    process.on("SIGINT", async () => {
+      console.log("[emailer] SIGINT — closing subscription");
+      await subscription.close();
+      process.exit(0);
+    });
+  } catch (error) {
+    console.error(`[emailer] fatal=${error.message === "SMTP_CONFIG_MISSING" ? error.message : "STARTUP_FAILURE"}`);
+    process.exit(1);
+  }
+}
