@@ -2,14 +2,14 @@
 
 Independent Pub/Sub worker for future submission bank-statement PDFs.
 
-For each new `submission-completed` event, the worker:
+For each new `submission-completed` event, the worker locks every tracked bank
+statement to `NDBF_EXTRACTION_PROVIDER` and follows exactly one provider path:
 
 1. Reads only `entry_id`, `submitted_at`, and `bank_statement_gcs_keys`.
 2. Ignores the generated application PDF and non-PDF bank attachments.
-3. Uploads each bank-statement PDF to the OpenAI Files API.
-4. Attaches it to `OPENAI_VECTOR_STORE_ID` using static 800-token chunks with 400-token overlap.
-5. Polls until indexing completes and saves the returned OpenAI file ID in `ndbf_applications.submission_documents`.
-6. Sends that file ID to the VM-only extraction API and requires `202 Accepted` before acknowledging the submission event.
+3. In `openai` mode, uploads and indexes each PDF in `OPENAI_VECTOR_STORE_ID`, then queues its file ID.
+4. In `llama` mode, skips OpenAI entirely and concurrently queues each tracked document for LlamaExtract v2.
+5. Requires `202 Accepted` for every document before acknowledging the submission event.
 
 The worker does not backfill historical submissions. Its subscription is created after deployment and therefore begins with future Pub/Sub messages only.
 
@@ -30,8 +30,16 @@ Required environment variables are loaded from `/opt/ndbf/.env` without changing
 - `OPENAI_VECTOR_STORE_ID`
 - `NDBF_EXTRACTION_URL`
 - `NDBF_EXTRACTION_API_TOKEN`
+- `NDBF_EXTRACTION_PROVIDER` (`openai` or `llama`)
 
 Optional overrides:
 
 - `VECTOR_SUBSCRIPTION` (default `submission-completed-vectorizer`)
 - `BQ_DOCUMENTS_TABLE` (default `submission_documents`)
+
+Switch only while all extraction work is idle:
+
+```bash
+sudo /opt/ndbf/scripts/set-extraction-provider openai
+sudo /opt/ndbf/scripts/set-extraction-provider llama
+```

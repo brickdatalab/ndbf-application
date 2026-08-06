@@ -11,7 +11,11 @@ import { Storage } from "@google-cloud/storage";
 
 import { buildSubmissionDocuments, parseGcsUri } from "./documents.js";
 import { createExtractionClient } from "./extraction-client.js";
-import { ingestAndEnqueue } from "./extraction-handoff.js";
+import {
+  enqueueLlamaDocuments,
+  ingestAndEnqueue,
+  resolveSubmissionProvider,
+} from "./extraction-handoff.js";
 import { ingestDocument } from "./ingest.js";
 import { createOpenAIClient } from "./openai.js";
 
@@ -27,14 +31,22 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_VECTOR_STORE_ID = process.env.OPENAI_VECTOR_STORE_ID || "";
 const NDBF_EXTRACTION_URL = process.env.NDBF_EXTRACTION_URL || "";
 const NDBF_EXTRACTION_API_TOKEN = process.env.NDBF_EXTRACTION_API_TOKEN || "";
+const CONFIGURED_EXTRACTION_PROVIDER =
+  process.env.NDBF_EXTRACTION_PROVIDER || "openai";
 
-if (
-  !OPENAI_API_KEY ||
-  !OPENAI_VECTOR_STORE_ID ||
-  !NDBF_EXTRACTION_URL ||
-  !NDBF_EXTRACTION_API_TOKEN
-) {
+if (!new Set(["openai", "llama"]).has(CONFIGURED_EXTRACTION_PROVIDER)) {
+  console.error("[vectorizer] FATAL: NDBF_EXTRACTION_PROVIDER must be openai or llama");
+  process.exit(1);
+}
+if (!NDBF_EXTRACTION_URL || !NDBF_EXTRACTION_API_TOKEN) {
   console.error("[vectorizer] FATAL: required runtime environment variables are missing");
+  process.exit(1);
+}
+if (
+  CONFIGURED_EXTRACTION_PROVIDER === "openai" &&
+  (!OPENAI_API_KEY || !OPENAI_VECTOR_STORE_ID)
+) {
+  console.error("[vectorizer] FATAL: OpenAI runtime environment variables are missing");
   process.exit(1);
 }
 
@@ -44,10 +56,12 @@ const pubsub = new PubSub({ projectId: PROJECT_ID });
 const subscription = pubsub.subscription(SUBSCRIPTION, {
   flowControl: { maxMessages: 2 },
 });
-const openai = createOpenAIClient({
-  apiKey: OPENAI_API_KEY,
-  vectorStoreId: OPENAI_VECTOR_STORE_ID,
-});
+const openai = CONFIGURED_EXTRACTION_PROVIDER === "openai"
+  ? createOpenAIClient({
+      apiKey: OPENAI_API_KEY,
+      vectorStoreId: OPENAI_VECTOR_STORE_ID,
+    })
+  : null;
 const extractionClient = createExtractionClient({
   endpoint: NDBF_EXTRACTION_URL,
   token: NDBF_EXTRACTION_API_TOKEN,
@@ -64,7 +78,11 @@ function stableErrorCode(error) {
 async function fetchSubmission(entryId) {
   const [rows] = await bigquery.query({
     query: `
-      SELECT entry_id, submitted_at, bank_statement_gcs_keys
+      SELECT
+        entry_id,
+        submitted_at,
+        bank_statement_gcs_keys,
+        extraction_provider
       FROM ${submissionsTable}
       WHERE entry_id = @entry_id
         AND submitted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
@@ -76,7 +94,7 @@ async function fetchSubmission(entryId) {
   return rows[0] || null;
 }
 
-function createRepository(sourceEventId) {
+function createRepository(sourceEventId, extractionProvider) {
   return {
     async ensure(document) {
       await bigquery.query({
@@ -93,34 +111,50 @@ function createRepository(sourceEventId) {
           ) AS source
           ON target.document_id = source.document_id
             AND target.submitted_at = source.submitted_at
-          WHEN MATCHED AND target.ingestion_status != 'COMPLETED' THEN
+          WHEN MATCHED AND target.extraction_provider IS NULL THEN
             UPDATE SET
               attempt_count = target.attempt_count + 1,
               source_event_id = @source_event_id,
+              extraction_provider = @extraction_provider,
+              provider_status = COALESCE(target.provider_status, 'PENDING'),
               updated_at = CURRENT_TIMESTAMP()
           WHEN NOT MATCHED THEN
             INSERT (
               document_id, entry_id, submitted_at, document_type,
               document_index, gcs_uri, vector_store_id, ingestion_status,
-              attempt_count, source_event_id, created_at, updated_at
+              attempt_count, source_event_id, extraction_provider,
+              provider_status, created_at, updated_at
             )
             VALUES (
               source.document_id, source.entry_id, source.submitted_at,
               source.document_type, source.document_index, source.gcs_uri,
               @vector_store_id, 'PENDING', 1, @source_event_id,
+              @extraction_provider, 'PENDING',
               CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
             )
         `,
         params: {
           ...document,
           source_event_id: sourceEventId,
-          vector_store_id: OPENAI_VECTOR_STORE_ID,
+          vector_store_id:
+            extractionProvider === "openai" ? OPENAI_VECTOR_STORE_ID : null,
+          extraction_provider: extractionProvider,
+        },
+        types: {
+          vector_store_id: "STRING",
         },
       });
 
       const [rows] = await bigquery.query({
         query: `
-          SELECT ingestion_status, openai_file_id, vector_store_file_id
+          SELECT
+            ingestion_status,
+            openai_file_id,
+            vector_store_file_id,
+            extraction_provider,
+            provider_status,
+            provider_file_id,
+            provider_job_id
           FROM ${documentsTable}
           WHERE document_id = @document_id
             AND submitted_at = TIMESTAMP(@submitted_at)
@@ -131,7 +165,13 @@ function createRepository(sourceEventId) {
           submitted_at: document.submitted_at,
         },
       });
-      return rows[0] || null;
+      const state = rows[0] || null;
+      if (state && state.extraction_provider !== extractionProvider) {
+        const error = new Error("DOCUMENT_PROVIDER_MISMATCH");
+        error.code = "DOCUMENT_PROVIDER_MISMATCH";
+        throw error;
+      }
+      return state;
     },
 
     async markUploaded(document, value) {
@@ -144,6 +184,7 @@ function createRepository(sourceEventId) {
             source_size_bytes = @source_size_bytes,
             source_sha256 = @source_sha256,
             openai_file_id = @openai_file_id,
+            provider_file_id = @openai_file_id,
             ingestion_status = 'UPLOADED',
             openai_status = 'uploaded',
             error_code = NULL,
@@ -288,22 +329,37 @@ async function handleMessage(message) {
       return;
     }
     const documents = buildSubmissionDocuments(row);
-    const repo = createRepository(message.id);
-    for (const document of documents) {
-      const result = await ingestAndEnqueue(document, {
-        ingest: ingestDocument,
-        ingestOptions: {
-          repo,
-          loadSource,
-          prepareUpload,
-          openai,
-        },
-        extractionClient,
-      });
-      console.log(
-        `[vectorizer] msg=${message.id} document=${document.document_id} ` +
-          `status=${result.status} extraction=${result.extractionStatus}`
-      );
+    const provider = resolveSubmissionProvider(
+      CONFIGURED_EXTRACTION_PROVIDER,
+      row.extraction_provider,
+    );
+    const repo = createRepository(message.id, provider);
+    if (provider === "llama") {
+      await Promise.all(documents.map((document) => repo.ensure(document)));
+      const results = await enqueueLlamaDocuments(documents, { extractionClient });
+      for (const { document, result } of results) {
+        console.log(
+          `[vectorizer] msg=${message.id} document=${document.document_id} ` +
+            `provider=llama status=${result.status} extraction=${result.extractionStatus}`
+        );
+      }
+    } else {
+      for (const document of documents) {
+        const result = await ingestAndEnqueue(document, {
+          ingest: ingestDocument,
+          ingestOptions: {
+            repo,
+            loadSource,
+            prepareUpload,
+            openai,
+          },
+          extractionClient,
+        });
+        console.log(
+          `[vectorizer] msg=${message.id} document=${document.document_id} ` +
+            `provider=openai status=${result.status} extraction=${result.extractionStatus}`
+        );
+      }
     }
     console.log(`[vectorizer] msg=${message.id} completed_pdfs=${documents.length}`);
     message.ack();
@@ -317,7 +373,8 @@ async function handleMessage(message) {
 
 console.log(
   `[vectorizer] starting subscription=${SUBSCRIPTION} project=${PROJECT_ID} ` +
-    `table=${BQ_DATASET}.${BQ_DOCUMENTS_TABLE} chunking=800/400 scope=future-bank-pdfs`
+    `table=${BQ_DATASET}.${BQ_DOCUMENTS_TABLE} provider=${CONFIGURED_EXTRACTION_PROVIDER} ` +
+    `chunking=800/400 scope=future-bank-pdfs`
 );
 
 subscription.on("message", handleMessage);
