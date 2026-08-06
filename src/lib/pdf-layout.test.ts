@@ -59,8 +59,8 @@ describe("underwriting-v1 signed source PDF", () => {
     expect(raw).toContain("(nextdaybizfunding) Tj");
     expect(raw).toContain("(BANK STATEMENT UNDERWRITING) Tj");
     expect(raw).toContain("(Statement Summary) Tj");
-    expect(raw).toContain("(MCA Deposits) Tj");
-    expect(raw).toContain("(Debt Summary) Tj");
+    expect(raw).not.toContain("(MCA Deposits) Tj");
+    expect(raw).not.toContain("(Debt Summary) Tj");
     expect(raw).not.toContain("Entry #");
 
     const pageStreams = [...raw.matchAll(/\nstream\n([\s\S]*?)\nendstream/g)];

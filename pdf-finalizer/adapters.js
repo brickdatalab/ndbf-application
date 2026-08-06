@@ -73,61 +73,6 @@ export function buildSummaryQueries(options = {}) {
       ORDER BY underwriting.statement_start_date, underwriting.statement_end_date,
         underwriting.document_index, underwriting.document_id
     `,
-    deposits: `
-      SELECT
-        transactions.document_id,
-        transactions.openai_file_id,
-        transactions.canonical_counterparty AS lender,
-        CAST(transactions.transaction_date AS STRING) AS deposit_date,
-        CAST(transactions.amount AS STRING) AS amount
-      FROM \`${project}.${dataset}.bank_statement_transactions_classified\` AS transactions
-      WHERE transactions.entry_id = @entry_id
-        AND transactions.amount > 0
-        AND transactions.classification = 'MCA_FUNDING'
-        AND transactions.confidence = 'CONFIRMED'
-        AND transactions.paired_reversal_transaction_id IS NULL
-        AND NOT transactions.is_reversed_original
-        AND transactions.canonical_counterparty IS NOT NULL
-      ORDER BY transactions.transaction_date, transactions.document_index,
-        transactions.canonical_counterparty, transactions.amount, transactions.transaction_id
-    `,
-    debt: `
-      SELECT
-        positions.position_key,
-        positions.canonical_lender AS lender,
-        'Merchant Cash Advance' AS debt_type,
-        CAST(MIN(positions.first_payment_date) AS STRING) AS first_payment_date,
-        CAST(MAX(positions.last_payment_date) AS STRING) AS last_payment_date,
-        CASE
-          WHEN LOGICAL_OR(positions.position_review_required)
-            OR LOGICAL_OR(positions.position_confidence != 'CONFIRMED')
-            OR LOGICAL_OR(positions.status = 'CADENCE_UNCONFIRMED') THEN 'Review'
-          WHEN LOGICAL_OR(positions.status = 'CURRENT_PAYING') THEN 'Current'
-          WHEN LOGICAL_OR(positions.status = 'CURRENT_WITH_MISSES') THEN 'Current + misses'
-          ELSE 'Inactive'
-        END AS status,
-        SUM(positions.successful_payment_count) AS payments,
-        CAST(SUM(positions.total_paid) AS STRING) AS total_paid,
-        CASE ANY_VALUE(positions.frequency HAVING MAX positions.last_payment_date)
-          WHEN 'BUSINESS_DAILY' THEN 'Business daily'
-          WHEN 'WEEKLY' THEN 'Weekly'
-          WHEN 'BIWEEKLY' THEN 'Biweekly'
-          WHEN 'MONTHLY' THEN 'Monthly'
-          ELSE 'Unconfirmed'
-        END AS frequency,
-        CAST(CASE ANY_VALUE(positions.frequency HAVING MAX positions.last_payment_date)
-          WHEN 'BUSINESS_DAILY' THEN ROUND(MAX(positions.payment_amount) * NUMERIC '21.75', 2)
-          WHEN 'WEEKLY' THEN ROUND(MAX(positions.payment_amount) * NUMERIC '4.345', 2)
-          WHEN 'BIWEEKLY' THEN ROUND(MAX(positions.payment_amount) * NUMERIC '2.1725', 2)
-          WHEN 'MONTHLY' THEN ROUND(MAX(positions.payment_amount), 2)
-          ELSE NULL
-        END AS STRING) AS estimated_monthly
-      FROM \`${project}.${dataset}.bank_statement_mca_positions\` AS positions
-      WHERE positions.entry_id = @entry_id
-      GROUP BY positions.account_key, positions.position_key, positions.canonical_lender
-      ORDER BY MIN(positions.first_payment_date), MAX(positions.last_payment_date),
-        positions.canonical_lender, positions.position_key
-    `,
   };
 }
 
@@ -135,29 +80,8 @@ function fingerprint(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function mergeSummary(metadata, statements, deposits, debtAccounts) {
+function mergeSummary(metadata, statements) {
   if (!metadata) return null;
-  const statementByDocument = new Map(
-    statements.map((statement) => [
-      `${statement.document_id}\u0000${statement.openai_file_id}`,
-      statement,
-    ]),
-  );
-  const mcaDeposits = deposits.map((deposit) => {
-    const statement = statementByDocument.get(
-      `${deposit.document_id}\u0000${deposit.openai_file_id}`,
-    );
-    return {
-      document_id: deposit.document_id,
-      openai_file_id: deposit.openai_file_id,
-      account_last_four: statement?.account_last_four ?? null,
-      lender: deposit.lender,
-      deposit_date: deposit.deposit_date,
-      amount: deposit.amount,
-      statement_start_date: statement?.statement_start_date ?? null,
-      statement_end_date: statement?.statement_end_date ?? null,
-    };
-  });
   const displayed = {
     entry_id: metadata.entry_id,
     analysis_version: Number(metadata.analysis_version),
@@ -166,8 +90,6 @@ function mergeSummary(metadata, statements, deposits, debtAccounts) {
     extracted_document_count: Number(metadata.extracted_document_count),
     all_documents_processed: metadata.all_documents_processed,
     statements,
-    mca_deposits: mcaDeposits,
-    debt_accounts: debtAccounts,
   };
   return {
     ...displayed,
@@ -219,14 +141,12 @@ export function createProductionAdapters({
 
   return {
     async queryRows(entryId) {
-      const [metadataRows, statements, deposits, debtAccounts] = await Promise.all([
+      const [metadataRows, statements] = await Promise.all([
         query(queries.metadata, entryId),
         query(queries.statements, entryId),
-        query(queries.deposits, entryId),
-        query(queries.debt, entryId),
       ]);
       if (metadataRows.length > 1) return metadataRows;
-      const summary = mergeSummary(metadataRows[0], statements, deposits, debtAccounts);
+      const summary = mergeSummary(metadataRows[0], statements);
       return summary ? [summary] : [];
     },
 

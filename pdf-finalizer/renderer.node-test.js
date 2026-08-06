@@ -41,10 +41,10 @@ test("formats exact decimal strings without floating-point conversion", () => {
   assert.equal(formatExactDecimal("not-a-decimal", { currency: true }), "—");
 });
 
-test("renders every row, paginates, preserves source, and embeds authoritative ID", async () => {
+test("renders every statement row only, paginates, preserves source, and embeds authoritative ID", async () => {
   const source = sourcePdf();
   const before = hash(source);
-  const summary = summaryRow({ debtCount: 90 });
+  const summary = summaryRow({ statementCount: 90 });
   const rendered = await renderFinalizedPdf({
     sourcePdf: source,
     entryId: ENTRY_ID,
@@ -52,17 +52,19 @@ test("renders every row, paginates, preserves source, and embeds authoritative I
     summary,
   });
   assert.equal(hash(source), before);
-  assert.equal(rendered.metrics.statementRows, 1);
-  assert.equal(rendered.metrics.mcaDepositRows, 1);
-  assert.equal(rendered.metrics.debtRows, 90);
+  assert.equal(rendered.metrics.statementRows, 90);
+  assert.equal("mcaDepositRows" in rendered.metrics, false);
+  assert.equal("debtRows" in rendered.metrics, false);
   assert.equal(rendered.metrics.clippedRows, 0);
   assert.ok(rendered.metrics.pageCount > 2);
   assert.equal(await verifyFinalizedPdf(rendered.buffer, ENTRY_ID), true);
   const text = await extractedText(rendered.buffer);
   assert.match(text, /Entry #ndbf_synthetic123/);
   assert.match(text.replace(/\s/g, ""), /9,007,199,254,740,993\.123456789/);
-  assert.match(text, /Synthetic Lender 090/);
-  assert.match(text, /Merchant Cash Advance/);
+  assert.doesNotMatch(text, /MCA Deposits/);
+  assert.doesNotMatch(text, /Debt Summary/);
+  assert.doesNotMatch(text, /Synthetic Lender/);
+  assert.doesNotMatch(text, /Merchant Cash Advance/);
 });
 
 test("review-required output renders Review and safe missing-value markers", async () => {

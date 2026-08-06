@@ -98,33 +98,6 @@ function statementCells(row) {
   ];
 }
 
-function mcaDepositCells(row) {
-  const account = /^[0-9]{4}$/.test(row.account_last_four ?? "")
-    ? `**** ${row.account_last_four}`
-    : "—";
-  return [
-    account,
-    displayValue(row.lender),
-    formatDate(row.deposit_date),
-    formatExactDecimal(row.amount, { currency: true }),
-    formatPeriod(row.statement_start_date, row.statement_end_date),
-  ];
-}
-
-function debtCells(row) {
-  return [
-    displayValue(row.lender),
-    displayValue(row.debt_type),
-    formatDate(row.first_payment_date),
-    formatDate(row.last_payment_date),
-    row.status === "Review" ? "Review" : displayValue(row.status),
-    displayValue(row.payments),
-    formatExactDecimal(row.total_paid, { currency: true }),
-    row.frequency === "Unconfirmed" ? "Review" : displayValue(row.frequency),
-    formatExactDecimal(row.estimated_monthly, { currency: true }),
-  ];
-}
-
 function wrapText(font, text, size, maxWidth) {
   const normalized = displayValue(text);
   const words = normalized.split(/\s+/);
@@ -365,15 +338,7 @@ export async function renderFinalizedPdf({
   });
 
   const statementSection = layout.sections.find((item) => item.id === "statement-summary");
-  const depositSection = layout.sections.find((item) => item.id === "mca-deposits");
-  const debtSection = layout.sections.find((item) => item.id === "debt-summary");
   const statements = summary.statements.map(statementCells);
-  const deposits = summary.mca_deposits.length
-    ? summary.mca_deposits.map(mcaDepositCells)
-    : [[status === "REVIEW_REQUIRED" ? "Review" : "None detected"]];
-  const debts = summary.debt_accounts.length
-    ? summary.debt_accounts.map(debtCells)
-    : [[status === "REVIEW_REQUIRED" ? "Review" : "None detected"]];
 
   const statementOverflow = drawRowsInBand({
     page,
@@ -381,22 +346,6 @@ export async function renderFinalizedPdf({
     columns: statementSection.columns,
     font: fonts.normal,
     topMm: 49,
-    bottomMm: 63,
-  });
-  const depositOverflow = drawRowsInBand({
-    page,
-    cells: deposits,
-    columns: depositSection.columns,
-    font: fonts.normal,
-    topMm: 79,
-    bottomMm: 93,
-  });
-  const debtOverflow = drawRowsInBand({
-    page,
-    cells: debts,
-    columns: debtSection.columns,
-    font: fonts.normal,
-    topMm: 109,
     bottomMm: 280,
   });
 
@@ -406,22 +355,6 @@ export async function renderFinalizedPdf({
     entryId,
     cells: statementOverflow,
     section: statementSection,
-    layout,
-  });
-  drawContinuationPages({
-    document,
-    fonts,
-    entryId,
-    cells: depositOverflow,
-    section: depositSection,
-    layout,
-  });
-  drawContinuationPages({
-    document,
-    fonts,
-    entryId,
-    cells: debtOverflow,
-    section: debtSection,
     layout,
   });
 
@@ -434,8 +367,6 @@ export async function renderFinalizedPdf({
     buffer,
     metrics: {
       statementRows: summary.statements.length,
-      mcaDepositRows: summary.mca_deposits.length,
-      debtRows: summary.debt_accounts.length,
       pageCount: document.getPageCount(),
       clippedRows: 0,
     },

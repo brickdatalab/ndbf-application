@@ -141,8 +141,6 @@ export function validateSummaryRow(row, event) {
     max: 1024,
   });
   assertArray(row.statements, "statements");
-  assertArray(row.mca_deposits, "mca_deposits");
-  assertArray(row.debt_accounts, "debt_accounts");
   if (
     row.statements.length !== event.extracted_document_count ||
     row.statements.length !== event.expected_document_count
@@ -187,35 +185,6 @@ export function validateSummaryRow(row, event) {
       ["quality_status", { max: 32 }],
     ],
     "STATEMENT",
-    event.status,
-  );
-  validateRows(
-    row.mca_deposits,
-    [
-      ["account_last_four", { max: 4 }],
-      ["lender", { nullable: false, max: 512 }],
-      ["deposit_date", { max: 10 }],
-      ["amount", { type: "decimal", requiredReady: true }],
-      ["statement_start_date", { max: 10 }],
-      ["statement_end_date", { max: 10 }],
-    ],
-    "MCA_DEPOSIT",
-    event.status,
-  );
-  validateRows(
-    row.debt_accounts,
-    [
-      ["lender", { nullable: false, max: 512 }],
-      ["debt_type", { max: 64 }],
-      ["first_payment_date", { max: 10 }],
-      ["last_payment_date", { max: 10 }],
-      ["status", { max: 32 }],
-      ["payments", { type: "count", requiredReady: true }],
-      ["total_paid", { type: "decimal", requiredReady: true }],
-      ["frequency", { max: 32 }],
-      ["estimated_monthly", { type: "decimal", requiredReady: true }],
-    ],
-    "DEBT_ACCOUNT",
     event.status,
   );
   return {

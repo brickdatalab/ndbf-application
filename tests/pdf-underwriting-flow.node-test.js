@@ -52,7 +52,7 @@ async function extractedText(buffer) {
   return output.join(" ");
 }
 
-test("synthetic source finalizes all three sections and replay is idempotent", async () => {
+test("synthetic source finalizes Statement Summary only and replay is idempotent", async () => {
   const source = sourcePdf();
   const sourceHash = sha256(source);
   const summary = summaryRow();
@@ -102,16 +102,17 @@ test("synthetic source finalizes all three sections and replay is idempotent", a
   const finalText = await extractedText(artifact.buffer);
   assert.equal(renderedMetrics.length, 1);
   assert.equal(renderedMetrics[0].statementRows, 1);
-  assert.equal(renderedMetrics[0].mcaDepositRows, 1);
-  assert.equal(renderedMetrics[0].debtRows, 1);
+  assert.equal("mcaDepositRows" in renderedMetrics[0], false);
+  assert.equal("debtRows" in renderedMetrics[0], false);
   assert.equal(renderedMetrics[0].clippedRows, 0);
   assert.ok(renderedMetrics[0].pageCount >= 2);
   assert.equal(await verifyFinalizedPdf(artifact.buffer, ENTRY_ID), true);
   assert.notEqual(firstArtifactHash, sourceHash);
   assert.match(finalText.replace(/\s/g, ""), /278,945\.82/);
-  assert.match(finalText, /Extremely Long Synthetic Merchant Cash Advance Lender/);
-  assert.match(finalText, /Synthetic Lender 001/);
-  assert.match(finalText, /Merchant Cash Advance/);
+  assert.doesNotMatch(finalText, /MCA Deposits/);
+  assert.doesNotMatch(finalText, /Debt Summary/);
+  assert.doesNotMatch(finalText, /Synthetic Lender/);
+  assert.doesNotMatch(finalText, /Merchant Cash Advance/);
   assert.equal(sha256(source), sourceHash);
 
   assert.deepEqual(await finalize(readyEvent()), { code: "ARTIFACT_REUSED" });

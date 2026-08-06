@@ -114,7 +114,9 @@ export async function validateDeclaredPdfLayout({ declaredVersion, pdfBuffer }) 
       "Underwriting page content fingerprint does not match the declared version",
     );
   }
-  if (actualFingerprint !== contract.decodedLastPageContentSha256) {
+  const acceptedFingerprints =
+    contract.acceptedDecodedLastPageContentSha256 ?? [contract.decodedLastPageContentSha256];
+  if (!acceptedFingerprints.includes(actualFingerprint)) {
     throw new PdfLayoutValidationError(
       "PDF_LAYOUT_FINGERPRINT_MISMATCH",
       "Underwriting page content fingerprint does not match the declared version",

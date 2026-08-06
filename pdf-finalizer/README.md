@@ -4,7 +4,9 @@ Consumes `bank_statement_underwriting_ready` events, validates the immutable
 signed source PDF, renders the authoritative BigQuery underwriting read model,
 stores a create-only finalized PDF, and then publishes `application_pdf_ready`.
 It reads the existing underwriting views directly; no additional aggregate
-BigQuery view is required.
+BigQuery view is required. The finalized PDF renders Statement Summary only;
+MCA Deposits and Debt Summary remain available in BigQuery but are not included
+in the applicant PDF.
 
 ```bash
 npm ci --omit=dev

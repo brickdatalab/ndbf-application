@@ -50,24 +50,25 @@ export function readyEvent(status = "READY") {
 export function summaryRow({
   status = "READY",
   fingerprint = "A".repeat(64),
-  debtCount = 1,
+  statementCount = 1,
 } = {}) {
   return {
     entry_id: ENTRY_ID,
     analysis_version: 1,
     analysis_status: status,
-    expected_document_count: 1,
-    extracted_document_count: 1,
+    expected_document_count: statementCount,
+    extracted_document_count: statementCount,
     all_documents_processed: true,
     pdf_layout_version: "underwriting-v1",
     pdf_source_generation: "10",
     pdf_source_sha256: SOURCE_PDF_SHA256,
     pdf_gcs_key: `gs://app_banks/synthetic_${ENTRY_ID}/synthetic.pdf`,
     summary_fingerprint: fingerprint,
-    statements: [
-      {
-        document_id: "doc_synthetic1",
-        openai_file_id: "file_synthetic1",
+    statements: Array.from({ length: statementCount }, (_value, index) => {
+      const suffix = String(index + 1).padStart(3, "0");
+      return {
+        document_id: `doc_synthetic${suffix}`,
+        openai_file_id: `file_synthetic${suffix}`,
         account_last_four: "0371",
         statement_start_date: "2024-06-03",
         statement_end_date: "2024-06-30",
@@ -79,28 +80,7 @@ export function summaryRow({
         average_daily_balance: "52197.31",
         mca_detected: status === "READY" ? "Yes" : "Review",
         quality_status: status,
-      },
-    ],
-    mca_deposits: [
-      {
-        account_last_four: "0371",
-        lender: "Extremely Long Synthetic Merchant Cash Advance Lender Name For Wrapping Verification",
-        deposit_date: "2024-06-10",
-        amount: "49500.00",
-        statement_start_date: "2024-06-03",
-        statement_end_date: "2024-06-30",
-      },
-    ],
-    debt_accounts: Array.from({ length: debtCount }, (_value, index) => ({
-      lender: `Synthetic Lender ${String(index + 1).padStart(3, "0")} With A Long Name That Must Wrap Cleanly`,
-      debt_type: "Merchant Cash Advance",
-      first_payment_date: "2024-06-03",
-      last_payment_date: "2024-06-28",
-      status: status === "READY" ? "Current" : "Review",
-      payments: 20,
-      total_paid: "15000.00",
-      frequency: status === "READY" ? "Business daily" : "Unconfirmed",
-      estimated_monthly: status === "READY" ? "16314.64" : null,
-    })),
+      };
+    }),
   };
 }

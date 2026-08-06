@@ -104,16 +104,7 @@ test("queries the existing underwriting views directly with one entry_id paramet
         if (options.query.includes("bank_statement_underwriting_summary")) {
           return [[fixture.statements[0]]];
         }
-        if (options.query.includes("bank_statement_transactions_classified")) {
-          return [[{
-            document_id: fixture.statements[0].document_id,
-            openai_file_id: fixture.statements[0].openai_file_id,
-            lender: fixture.mca_deposits[0].lender,
-            deposit_date: fixture.mca_deposits[0].deposit_date,
-            amount: fixture.mca_deposits[0].amount,
-          }]];
-        }
-        return [[fixture.debt_accounts[0]]];
+        return [[]];
       },
     },
     storage: { bucket: () => ({}) },
@@ -121,7 +112,7 @@ test("queries the existing underwriting views directly with one entry_id paramet
   });
   const rows = await adapters.queryRows(ENTRY_ID);
   assert.equal(rows.length, 1);
-  assert.equal(queryOptions.length, 4);
+  assert.equal(queryOptions.length, 2);
   for (const options of queryOptions) {
     assert.equal(options.params.entry_id, ENTRY_ID);
     assert.equal(options.types.entry_id, "STRING");
@@ -131,8 +122,8 @@ test("queries the existing underwriting views directly with one entry_id paramet
     assert.doesNotMatch(options.query, /lithe-hallway-493420-r4/);
   }
   assert.equal(rows[0].statements.length, 1);
-  assert.equal(rows[0].mca_deposits.length, 1);
-  assert.equal(rows[0].debt_accounts.length, 1);
+  assert.equal("mca_deposits" in rows[0], false);
+  assert.equal("debt_accounts" in rows[0], false);
   assert.match(rows[0].summary_fingerprint, /^[a-f0-9]{64}$/);
 
   for (const invalid of [
@@ -218,7 +209,6 @@ test("enforces canonical decimals with status-aware missing values", () => {
   const review = summaryRow({ status: "REVIEW_REQUIRED" });
   review.statements[0].deposits = null;
   review.statements[0].true_revenue = null;
-  review.debt_accounts[0].estimated_monthly = null;
   assert.doesNotThrow(() =>
     validateSummaryRow(review, readyEvent("REVIEW_REQUIRED")),
   );
