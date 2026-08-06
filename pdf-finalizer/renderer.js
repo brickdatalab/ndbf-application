@@ -13,6 +13,7 @@ const LEFT_MM = 18;
 const RIGHT_MM = 192;
 const NAVY = rgb(0, 33 / 255, 64 / 255);
 const BLUE = rgb(0, 117 / 255, 223 / 255);
+const BODY = rgb(48 / 255, 55 / 255, 62 / 255);
 const MUTED = rgb(120 / 255, 120 / 255, 120 / 255);
 const RULE = rgb(220 / 255, 220 / 255, 220 / 255);
 const GREEN = rgb(24 / 255, 145 / 255, 87 / 255);
@@ -55,15 +56,50 @@ function displayValue(value) {
   return text || "—";
 }
 
-export function formatExactDecimal(value, { currency = false } = {}) {
+function scaledDecimalParts(integer, fraction, scale) {
+  const padded = fraction.padEnd(scale, "0");
+  const keptFraction = padded.slice(0, scale);
+  let units = BigInt(`${integer}${keptFraction}` || "0");
+  if (fraction.length > scale && Number.parseInt(fraction[scale], 10) >= 5) {
+    units += 1n;
+  }
+  const divisor = 10n ** BigInt(scale);
+  return {
+    integer: (units / divisor).toString(),
+    fraction:
+      scale > 0 ? (units % divisor).toString().padStart(scale, "0") : "",
+    isZero: units === 0n,
+  };
+}
+
+export function formatExactDecimal(
+  value,
+  { currency = false, scale = null } = {},
+) {
   if (value === null || value === undefined || value === "") return "—";
   const text = String(value).trim();
-  const match = text.match(/^(-?)([0-9]+)(\.[0-9]+)?$/);
+  const match = text.match(/^(-?)([0-9]+)(?:\.([0-9]+))?$/);
   if (!match) return "—";
-  const grouped = match[2].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const amount = `${grouped}${match[3] ?? ""}`;
-  if (!currency) return `${match[1]}${amount}`;
-  return match[1] ? `-$${amount}` : `$${amount}`;
+
+  let integer = match[2];
+  let fraction = match[3] ?? "";
+  let isZero = /^0+$/.test(integer) && (!fraction || /^0+$/.test(fraction));
+  if (Number.isInteger(scale) && scale >= 0) {
+    const scaled = scaledDecimalParts(integer, fraction, scale);
+    integer = scaled.integer;
+    fraction = scaled.fraction;
+    isZero = scaled.isZero;
+  }
+
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const amount = `${grouped}${fraction ? `.${fraction}` : ""}`;
+  const negative = match[1] && !isZero;
+  if (!currency) return negative ? `-${amount}` : amount;
+  return negative ? `-$${amount}` : `$${amount}`;
+}
+
+function formatCurrency(value) {
+  return formatExactDecimal(value, { currency: true, scale: 2 });
 }
 
 function formatDate(value) {
@@ -79,23 +115,24 @@ function formatPeriod(start, end) {
   return `${formatDate(start)}–${formatDate(end)}`;
 }
 
-function statementCells(row) {
+function statementBlock(row) {
   const detected =
     row.mca_detected === "Yes"
       ? "Yes"
       : row.mca_detected === "Review" || row.quality_status === "REVIEW_REQUIRED"
         ? "Review"
         : "—";
-  return [
-    formatPeriod(row.statement_start_date, row.statement_end_date),
-    formatExactDecimal(row.deposits, { currency: true }),
-    displayValue(row.deposit_count),
-    formatExactDecimal(row.true_revenue, { currency: true }),
-    formatExactDecimal(row.withdrawals, { currency: true }),
-    displayValue(row.negative_ending_days),
-    formatExactDecimal(row.average_daily_balance, { currency: true }),
-    detected,
-  ];
+  const lastFour = /^\d{4}$/.test(String(row.account_last_four ?? ""))
+    ? `**** ${row.account_last_four}`
+    : "—";
+  return {
+    heading: `${formatPeriod(row.statement_start_date, row.statement_end_date)} | Account ${lastFour}`,
+    details: [
+      `Deposits: ${formatCurrency(row.deposits)} | Deposit count: ${displayValue(row.deposit_count)} | True revenue: ${formatCurrency(row.true_revenue)} | Withdrawals: ${formatCurrency(row.withdrawals)}`,
+      `Negative ending days: ${displayValue(row.negative_ending_days)} | Avg. daily balance: ${formatCurrency(row.average_daily_balance)} | MCA detected: ${detected}`,
+    ],
+    review: detected === "Review",
+  };
 }
 
 function wrapText(font, text, size, maxWidth) {
@@ -135,87 +172,82 @@ function wrapText(font, text, size, maxWidth) {
   return lines.length ? lines : ["—"];
 }
 
-function columnWidths(columns) {
-  return columns.map((column, index) => {
-    const right = columns[index + 1]?.xMm ?? RIGHT_MM;
-    return mm(Math.max(4, right - column.xMm - 1.5));
-  });
-}
-
-function prepareRow(font, cells, columns, fontSize) {
-  const widths = columnWidths(columns);
-  const lines = cells.map((cell, index) =>
-    wrapText(font, cell, fontSize, widths[index]),
+function prepareStatementBlock(fonts, block) {
+  const width = mm(RIGHT_MM - LEFT_MM);
+  const headingSize = 7.2;
+  const detailSize = 6.2;
+  const headingLineHeight = 9;
+  const detailLineHeight = 7.6;
+  const headingLines = wrapText(fonts.bold, block.heading, headingSize, width);
+  const detailLines = block.details.flatMap((line) =>
+    wrapText(fonts.normal, line, detailSize, width),
   );
-  const lineCount = Math.max(...lines.map((value) => value.length));
-  const lineHeight = fontSize + 1.2;
   return {
-    lines,
-    height: Math.max(mm(5), lineCount * lineHeight + 3),
-    lineHeight,
+    ...block,
+    headingSize,
+    detailSize,
+    headingLineHeight,
+    detailLineHeight,
+    headingLines,
+    detailLines,
+    height:
+      headingLines.length * headingLineHeight +
+      detailLines.length * detailLineHeight +
+      6,
   };
 }
 
-function drawPreparedRow({ page, row, columns, font, fontSize, topY, color }) {
-  for (const [columnIndex, lines] of row.lines.entries()) {
-    for (const [lineIndex, text] of lines.entries()) {
-      page.drawText(text, {
-        x: mm(columns[columnIndex].xMm),
-        y: topY - fontSize - 1.5 - lineIndex * row.lineHeight,
-        size: fontSize,
-        font,
-        color,
-      });
-    }
+function drawPreparedStatementBlock({ page, block, fonts, topY }) {
+  let cursorY = topY;
+  for (const line of block.headingLines) {
+    page.drawText(line, {
+      x: mm(LEFT_MM),
+      y: cursorY - block.headingSize,
+      size: block.headingSize,
+      font: fonts.bold,
+      color: NAVY,
+    });
+    cursorY -= block.headingLineHeight;
   }
-  const bottomY = topY - row.height;
-  page.drawLine({
-    start: { x: mm(LEFT_MM), y: bottomY },
-    end: { x: mm(RIGHT_MM), y: bottomY },
-    thickness: 0.35,
-    color: RULE,
-  });
-  return bottomY;
+  cursorY -= 1;
+  for (const line of block.detailLines) {
+    page.drawText(line, {
+      x: mm(LEFT_MM),
+      y: cursorY - block.detailSize,
+      size: block.detailSize,
+      font: fonts.normal,
+      color: block.review ? MUTED : BODY,
+    });
+    cursorY -= block.detailLineHeight;
+  }
+  return topY - block.height;
 }
 
-function drawRowsInBand({
-  page,
-  cells,
-  columns,
-  font,
-  topMm,
-  bottomMm,
-  fontSize = 5.2,
-}) {
+function drawBlocksInBand({ page, blocks, fonts, topMm, bottomMm }) {
   let topY = yFromTop(page, topMm);
   const bottomY = yFromTop(page, bottomMm);
   let index = 0;
-  for (; index < cells.length; index += 1) {
-    const row = prepareRow(font, cells[index], columns, fontSize);
-    if (topY - row.height < bottomY) break;
-    topY = drawPreparedRow({
-      page,
-      row,
-      columns,
-      font,
-      fontSize,
-      topY,
-      color: cells[index].includes("Review") ? MUTED : NAVY,
-    });
+  for (; index < blocks.length; index += 1) {
+    const block = prepareStatementBlock(fonts, blocks[index]);
+    if (topY - block.height < bottomY) break;
+    topY = drawPreparedStatementBlock({ page, block, fonts, topY });
   }
-  return cells.slice(index);
+  return blocks.slice(index);
 }
 
-function drawContinuationFrame(page, fonts, entryId, section, layout) {
+function drawWatermark(page, font) {
   page.drawText("nextdaybizfunding", {
     x: mm(35),
     y: mm(95),
     size: 72,
-    font: fonts.bold,
+    font,
     color: NAVY,
     opacity: 0.07,
     rotate: degrees(30),
   });
+}
+
+function drawHeader(page, fonts, entryId) {
   page.drawRectangle({
     x: 0,
     y: page.getHeight() - mm(14),
@@ -231,36 +263,39 @@ function drawContinuationFrame(page, fonts, entryId, section, layout) {
     color: rgb(1, 1, 1),
   });
   drawEntryId(page, fonts.bold, entryId);
-  page.drawText(`${section.title} — continued`, {
+}
+
+function drawUnderwritingFrame(page, fonts, entryId, status, continued = false) {
+  drawWatermark(page, fonts.bold);
+  drawHeader(page, fonts, entryId);
+  page.drawText("BANK STATEMENT UNDERWRITING", {
     x: mm(LEFT_MM),
-    y: yFromTop(page, 28),
+    y: yFromTop(page, 27),
+    size: 6.2,
+    font: fonts.bold,
+    color: BLUE,
+  });
+  if (!continued) {
+    page.drawText(status === "REVIEW_REQUIRED" ? "Review required" : "Complete", {
+      x: mm(LEFT_MM),
+      y: yFromTop(page, 31),
+      size: 5.2,
+      font: fonts.bold,
+      color: status === "REVIEW_REQUIRED" ? MUTED : GREEN,
+    });
+  }
+  page.drawText(continued ? "Statement Summary — continued" : "Statement Summary", {
+    x: mm(LEFT_MM),
+    y: yFromTop(page, 37),
     size: 10.5,
     font: fonts.bold,
     color: NAVY,
   });
   page.drawLine({
-    start: { x: mm(LEFT_MM), y: yFromTop(page, 31) },
-    end: { x: mm(RIGHT_MM), y: yFromTop(page, 31) },
+    start: { x: mm(LEFT_MM), y: yFromTop(page, 39.5) },
+    end: { x: mm(RIGHT_MM), y: yFromTop(page, 39.5) },
     thickness: 1,
     color: BLUE,
-  });
-  for (const column of section.columns) {
-    const labels = column.label.split("\n");
-    for (const [index, label] of labels.entries()) {
-      page.drawText(label, {
-        x: mm(column.xMm),
-        y: yFromTop(page, 38) - index * 5.6,
-        size: layout.rendering.columnFontSizePt,
-        font: fonts.bold,
-        color: MUTED,
-      });
-    }
-  }
-  page.drawLine({
-    start: { x: mm(LEFT_MM), y: yFromTop(page, 44) },
-    end: { x: mm(RIGHT_MM), y: yFromTop(page, 44) },
-    thickness: 0.45,
-    color: RULE,
   });
   drawFooter(page, fonts.normal);
 }
@@ -294,21 +329,20 @@ function drawEntryId(page, font, entryId) {
   });
 }
 
-function drawContinuationPages({ document, fonts, entryId, cells, section, layout }) {
-  let remaining = cells;
+function drawContinuationPages({ document, fonts, entryId, status, blocks }) {
+  let remaining = blocks;
   while (remaining.length > 0) {
     const page = document.addPage([A4_WIDTH, A4_HEIGHT]);
-    drawContinuationFrame(page, fonts, entryId, section, layout);
-    const next = drawRowsInBand({
+    drawUnderwritingFrame(page, fonts, entryId, status, true);
+    const next = drawBlocksInBand({
       page,
-      cells: remaining,
-      columns: section.columns,
-      font: fonts.normal,
-      topMm: 46,
+      blocks: remaining,
+      fonts,
+      topMm: 45,
       bottomMm: 280,
     });
     if (next.length === remaining.length) {
-      throw new Error("PDF_ROW_CANNOT_FIT");
+      throw new Error("PDF_STATEMENT_BLOCK_CANNOT_FIT");
     }
     remaining = next;
   }
@@ -327,25 +361,18 @@ export async function renderFinalizedPdf({
     normal: await document.embedFont(StandardFonts.Helvetica),
     bold: await document.embedFont(StandardFonts.HelveticaBold),
   };
-  const page = document.getPages().at(-1);
-  drawEntryId(page, fonts.bold, entryId);
-  page.drawText(status === "REVIEW_REQUIRED" ? "Review required" : "Complete", {
-    x: mm(LEFT_MM),
-    y: yFromTop(page, 31),
-    size: 5.2,
-    font: fonts.bold,
-    color: status === "REVIEW_REQUIRED" ? MUTED : GREEN,
-  });
 
-  const statementSection = layout.sections.find((item) => item.id === "statement-summary");
-  const statements = summary.statements.map(statementCells);
+  if (document.getPageCount() < 1) throw new Error("PDF_SOURCE_PAGE_MISSING");
+  document.removePage(document.getPageCount() - 1);
+  const page = document.addPage([A4_WIDTH, A4_HEIGHT]);
+  drawUnderwritingFrame(page, fonts, entryId, status);
 
-  const statementOverflow = drawRowsInBand({
+  const statements = summary.statements.map(statementBlock);
+  const statementOverflow = drawBlocksInBand({
     page,
-    cells: statements,
-    columns: statementSection.columns,
-    font: fonts.normal,
-    topMm: 49,
+    blocks: statements,
+    fonts,
+    topMm: 45,
     bottomMm: 280,
   });
 
@@ -353,9 +380,8 @@ export async function renderFinalizedPdf({
     document,
     fonts,
     entryId,
-    cells: statementOverflow,
-    section: statementSection,
-    layout,
+    status,
+    blocks: statementOverflow,
   });
 
   document.setTitle("NextDay Biz Funding Underwritten Application");

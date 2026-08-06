@@ -37,6 +37,14 @@ test("formats exact decimal strings without floating-point conversion", () => {
     "$9,007,199,254,740,993.123456789",
   );
   assert.equal(formatExactDecimal("-1234.500", { currency: true }), "-$1,234.500");
+  assert.equal(
+    formatExactDecimal("2254.914193548", { currency: true, scale: 2 }),
+    "$2,254.91",
+  );
+  assert.equal(
+    formatExactDecimal("1.999", { currency: true, scale: 2 }),
+    "$2.00",
+  );
   assert.equal(formatExactDecimal(null, { currency: true }), "—");
   assert.equal(formatExactDecimal("not-a-decimal", { currency: true }), "—");
 });
@@ -58,9 +66,22 @@ test("renders every statement row only, paginates, preserves source, and embeds 
   assert.equal(rendered.metrics.clippedRows, 0);
   assert.ok(rendered.metrics.pageCount > 2);
   assert.equal(await verifyFinalizedPdf(rendered.buffer, ENTRY_ID), true);
+  assert.equal(
+    rendered.buffer.includes(Buffer.from("Synthetic signed application")),
+    true,
+  );
   const text = await extractedText(rendered.buffer);
   assert.match(text, /Entry #ndbf_synthetic123/);
-  assert.match(text.replace(/\s/g, ""), /9,007,199,254,740,993\.123456789/);
+  assert.match(text, /Account \*\*\*\* 0371/);
+  assert.match(text, /Deposits:/);
+  assert.match(text, /Deposit count:/);
+  assert.match(text, /True revenue:/);
+  assert.match(text, /Withdrawals:/);
+  assert.match(text, /Negative ending days:/);
+  assert.match(text, /Avg\. daily balance:/);
+  assert.match(text, /MCA detected:/);
+  assert.match(text.replace(/\s/g, ""), /\$9,007,199,254,740,993\.12/);
+  assert.doesNotMatch(text, /Statement period/);
   assert.doesNotMatch(text, /MCA Deposits/);
   assert.doesNotMatch(text, /Debt Summary/);
   assert.doesNotMatch(text, /Synthetic Lender/);

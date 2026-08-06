@@ -62,27 +62,29 @@ export function drawUnderwritingSourcePage(document, layout) {
       section.titleYMm + layout.rendering.titleRuleOffsetMm,
     );
 
-    document.setFontSize(layout.rendering.columnFontSizePt);
-    document.setTextColor(...MUTED);
-    for (const column of section.columns) {
-      document.text(
-        column.label.split("\n"),
-        column.xMm,
-        section.titleYMm + layout.rendering.columnYOffsetMm,
-        {
-          align: column.align ?? "left",
-          lineHeightFactor: layout.rendering.columnLineHeightFactor,
-        },
+    if (section.columns.length > 0) {
+      document.setFontSize(layout.rendering.columnFontSizePt);
+      document.setTextColor(...MUTED);
+      for (const column of section.columns) {
+        document.text(
+          column.label.split("\n"),
+          column.xMm,
+          section.titleYMm + layout.rendering.columnYOffsetMm,
+          {
+            align: column.align ?? "left",
+            lineHeightFactor: layout.rendering.columnLineHeightFactor,
+          },
+        );
+      }
+      document.setDrawColor(...RULE);
+      document.setLineWidth(layout.rendering.columnRuleWidthMm);
+      document.line(
+        layout.writableRect.xMm,
+        section.titleYMm + layout.rendering.columnRuleOffsetMm,
+        layout.writableRect.xMm + layout.writableRect.widthMm,
+        section.titleYMm + layout.rendering.columnRuleOffsetMm,
       );
     }
-    document.setDrawColor(...RULE);
-    document.setLineWidth(layout.rendering.columnRuleWidthMm);
-    document.line(
-      layout.writableRect.xMm,
-      section.titleYMm + layout.rendering.columnRuleOffsetMm,
-      layout.writableRect.xMm + layout.writableRect.widthMm,
-      section.titleYMm + layout.rendering.columnRuleOffsetMm,
-    );
   }
 
   document.setFont("helvetica", "normal");
