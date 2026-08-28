@@ -225,8 +225,9 @@ export function composeEmail(
         ["UTM Medium", strOrDash(row.utm_medium)],
         ["UTM Campaign", strOrDash(row.utm_campaign)],
         ["Referrer", strOrDash(row.referrer)],
-        ["IP Address", strOrDash(row.ip_address)],
-        ["User Agent", strOrDash(row.user_agent)],
+        // IP address and user agent are intentionally omitted from the alert.
+        // Both are still captured in BigQuery (`ip_address`, `user_agent`) for
+        // audit/fraud review; they just add noise for the underwriting team.
       ],
     },
     {

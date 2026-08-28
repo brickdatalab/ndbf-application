@@ -7,9 +7,16 @@ Decoupled Pub/Sub subscriber that emails Josh + Fab every time a new application
 ## Flow
 
 ```
-submission-completed ──▶ submission-completed-emailer ──▶ defer when bank statements exist
-application-pdf-ready ─▶ application-pdf-ready-emailer ─▶ validate finalized PDF ─▶ SMTP
+submission-completed ──▶ submission-completed-emailer ──▶ load source PDF ──▶ SMTP
+application-pdf-ready ─▶ application-pdf-ready-emailer ─▶ ack only (no duplicate email)
 ```
+
+Email delivery is deliberately decoupled from the AI underwriting pipeline. Every
+submission — versioned or legacy, with or without bank statements — is emailed
+immediately from `submission-completed` using the source PDF uploaded at submit
+time (integrity-checked against `pdf_source_generation` + `pdf_source_sha256`).
+The finalized `underwritten-v1` PDF remains an enrichment persisted to GCS and
+never gates notification.
 
 Pub/Sub retries up to 5 times with exponential backoff on `nack`. After 5 failures, the message is forwarded to `submission-completed-dead-letter` (or dropped if dead-letter IAM is not yet bound).
 
@@ -17,11 +24,11 @@ Pub/Sub retries up to 5 times with exponential backoff on `nack`. After 5 failur
 
 - **Subject:** `{Business Legal Name} - Submission - MM/DD/YYYY`
 - **Body:** every form field from BQ, **phone + email unredacted**. No clause, no signature image.
-- **Attachments:** exactly one application PDF plus only the bank-statement objects declared in `bank_statement_gcs_keys`; the worker never lists the submission folder. `underwriting-v1` submissions with statements are emailed only from the finalized-PDF event. Legacy and zero-bank submissions send immediately. Total attachments remain capped at ~24MB.
+- **Attachments:** exactly one application PDF plus only the bank-statement objects declared in `bank_statement_gcs_keys`; the worker never lists the submission folder. All submissions send immediately from the submission event using the source PDF. Total attachments remain capped at ~24MB.
 
-The initial submission event owns immediate legacy/zero-bank delivery. For a
-versioned bank-statement submission it only defers; `application-pdf-ready-emailer`
-then owns the finalized delivery and acknowledges only after SMTP accepts it.
+The submission event owns delivery for every submission. `application-pdf-ready-emailer`
+acknowledges finalized-PDF events without emailing, so underwriters receive exactly
+one alert per application.
 
 ## Environment variables (set in `pm2` ecosystem file or via systemd env)
 

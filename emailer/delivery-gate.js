@@ -115,7 +115,13 @@ export function shouldDeferSubmissionEmail(row) {
   }
   const bankKeys = row.bank_statement_gcs_keys ?? [];
   if (!Array.isArray(bankKeys)) throw new EmailerError("BANK_KEYS_INVALID");
-  return version === PDF_LAYOUT_VERSION && bankKeys.length > 0;
+  // Notification delivery is intentionally decoupled from the AI underwriting
+  // pipeline. The source PDF and every bank statement are already in GCS and
+  // integrity-verified at submit time, so the alert always sends immediately.
+  // The finalized underwritten PDF is an enrichment and never gates email.
+  void version;
+  void bankKeys;
+  return false;
 }
 
 export function createFinalArtifactResolver({ bucketName, readObject }) {
@@ -277,8 +283,15 @@ export function createMessageHandler({
         logger.info(`[emailer] msg=${messageId} entry=${entryId} delivery=deferred`);
         return;
       }
-      if (readyEvent && !shouldDeferSubmissionEmail(row)) {
-        throw new EmailerError("READY_EVENT_SUBMISSION_MISMATCH");
+      if (readyEvent) {
+        // The submission alert already went out from `submission-completed`.
+        // The finalized underwriting PDF is an enrichment persisted in GCS and
+        // deliberately does not generate a second email.
+        message.ack();
+        logger.info(
+          `[emailer] msg=${messageId} entry=${entryId} delivery=skipped_finalized_no_duplicate`,
+        );
+        return;
       }
       const applicationArtifact = readyEvent
         ? await resolveFinalArtifact(row, readyEvent)

@@ -105,7 +105,7 @@ test("uses bounded flow control and imports worker without starting it", async (
 });
 
 test("defers only new versioned submissions that contain bank statements", () => {
-  assert.equal(shouldDeferSubmissionEmail(row()), true);
+  assert.equal(shouldDeferSubmissionEmail(row()), false);
   assert.equal(shouldDeferSubmissionEmail(row({ bank_statement_gcs_keys: [] })), false);
   assert.equal(shouldDeferSubmissionEmail(row({ pdf_layout_version: null })), false);
   assert.throws(() => shouldDeferSubmissionEmail(row({ pdf_layout_version: "future-v2" })), {
@@ -149,35 +149,37 @@ test("final resolver uses the event descriptor and verifies immutable artifact m
   assert.equal(resolved.sha256, event.final_pdf_sha256);
 });
 
-test("submission event defers without loading a PDF or contacting SMTP", async () => {
-  const deferred = message({ entry_id: "ndbf_test" });
+test("versioned submission with bank statements sends the source PDF immediately", async () => {
+  // Notification delivery must never wait on the AI underwriting pipeline.
+  const order = [];
+  const current = message({ entry_id: "ndbf_test" });
   await handler({
-    loadSourcePdf: async () => assert.fail("source must not load"),
-    resolveFinalArtifact: async () => assert.fail("final must not load"),
-    sendMail: async () => assert.fail("SMTP must not run"),
-  })(deferred);
-  assert.equal(deferred.ackCount, 1);
-  assert.equal(deferred.nackCount, 0);
+    loadSourcePdf: async () => { order.push("source"); return artifact("source"); },
+    resolveFinalArtifact: async () => assert.fail("final artifact must not be required"),
+    sendMail: async () => { order.push("smtp"); },
+  })(current);
+  assert.deepEqual(order, ["source", "smtp"]);
+  assert.equal(current.ackCount, 1);
+  assert.equal(current.nackCount, 0);
 });
 
-test("PDF-ready event sends the finalized PDF and ACKs only after SMTP", async () => {
-  const order = [];
-  const ready = message(readyEvent());
-  await handler({
-    resolveFinalArtifact: async (_row, event) => {
-      order.push(`resolve:${event.final_generation}`);
-      return artifact("final", { generation: "20" });
-    },
-    sendMail: async () => { order.push("smtp"); },
-  })(ready);
-  assert.deepEqual(order, ["resolve:20", "smtp"]);
-  assert.equal(ready.ackCount, 1);
-  assert.equal(ready.nackCount, 0);
-
-  const failed = message(readyEvent());
+test("submission email NACKs when SMTP fails so Pub/Sub redelivers", async () => {
+  const failed = message({ entry_id: "ndbf_test" });
   await handler({ sendMail: async () => { throw new Error("synthetic"); } })(failed);
   assert.equal(failed.ackCount, 0);
   assert.equal(failed.nackCount, 1);
+});
+
+test("PDF-ready event is acknowledged without sending a duplicate email", async () => {
+  // The alert already went out at submit time. The finalized underwriting PDF is
+  // persisted in GCS as an enrichment and must not produce a second email.
+  const ready = message(readyEvent());
+  await handler({
+    resolveFinalArtifact: async () => assert.fail("final artifact must not be loaded"),
+    sendMail: async () => assert.fail("SMTP must not run for a finalized event"),
+  })(ready);
+  assert.equal(ready.ackCount, 1);
+  assert.equal(ready.nackCount, 0);
 });
 
 test("legacy and zero-bank submissions still send the source PDF immediately", async () => {
