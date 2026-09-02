@@ -48,7 +48,9 @@ export function BusinessInfo() {
     }
     if (!f.businessEntityType) e.businessEntityType = "Required";
     if (!f.grossAnnualSalesBucket) e.grossAnnualSalesBucket = "Required";
-    if (!f.requestedFundingAmount || Number(f.requestedFundingAmount) <= 0) {
+    // Requested Funding Amount is optional. Only validate it when the applicant
+    // actually entered something, so a blank field never blocks submission.
+    if (f.requestedFundingAmount && Number(f.requestedFundingAmount) <= 0) {
       e.requestedFundingAmount = "Enter an amount greater than $0";
     }
     setErrors(e);
@@ -335,9 +337,8 @@ export function BusinessInfo() {
       <div className="max-w-md">
         <FormField
           label="Requested Funding Amount"
-          required
           htmlFor="requestedFundingAmount"
-          tooltip="Enter the amount of funding you're requesting."
+          tooltip="Optional — enter the amount of funding you're requesting."
           error={errors.requestedFundingAmount}
         >
           <div className="relative">
