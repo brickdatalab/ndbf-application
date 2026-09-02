@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { EMPTY_UNDERWRITING, type UnderwritingValues } from "./lib/underwriting";
 
 export type Address = {
   street: string;
@@ -64,6 +65,7 @@ type AppState = {
   submittedAt: string | null;
   appParam: string | null;
   utm: UtmParams;
+  underwriting: UnderwritingValues;
   formData: FormData;
 
   setCurrentStep: (n: number) => void;
@@ -76,6 +78,7 @@ type AppState = {
   removeBankStatement: (idx: number) => void;
   setAppParam: (v: string | null) => void;
   setUtm: (v: UtmParams) => void;
+  setUnderwriting: (v: UnderwritingValues) => void;
   markSubmitted: (entryId: string) => void;
   resetAll: () => void;
 };
@@ -131,6 +134,7 @@ export const useAppStore = create<AppState>()(
         utm_content: null,
         referrer: null,
       },
+      underwriting: EMPTY_UNDERWRITING,
       formData: initialFormData,
 
       setCurrentStep: (n) => set({ currentStep: n }),
@@ -161,6 +165,7 @@ export const useAppStore = create<AppState>()(
         })),
       setAppParam: (v) => set({ appParam: v }),
       setUtm: (v) => set({ utm: v }),
+      setUnderwriting: (v) => set({ underwriting: v }),
       markSubmitted: (entryId) =>
         set({
           isSubmitted: true,
@@ -191,6 +196,7 @@ export const useAppStore = create<AppState>()(
         currentStep: s.currentStep,
         appParam: s.appParam,
         utm: s.utm,
+        underwriting: s.underwriting,
         formData: {
           ...s.formData,
           bankStatements: [],

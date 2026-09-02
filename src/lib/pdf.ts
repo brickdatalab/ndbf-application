@@ -2,6 +2,11 @@ import jsPDF from "jspdf";
 import type { FormData } from "../store";
 import { TERMS_PARAGRAPHS } from "./terms";
 import {
+  UNDERWRITING_LABELS,
+  UNDERWRITING_PARAMS,
+  type UnderwritingValues,
+} from "./underwriting";
+import {
   MONTHS,
   SALES_BUCKETS,
   US_STATE_NAMES,
@@ -25,6 +30,8 @@ type PdfArgs = {
   submittedAtIso: string;
   appParam: string | null;
   formData: FormData;
+  /** Rep-supplied URL values; only populated ones are printed. */
+  underwriting?: UnderwritingValues | null;
 };
 
 const PAGE_W = 210; // A4 mm
@@ -48,6 +55,7 @@ export async function generateApplicationPdf({
   submittedAtIso,
   appParam,
   formData,
+  underwriting = null,
 }: PdfArgs): Promise<string> {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const layout = getPdfLayoutContract(PDF_LAYOUT_VERSION);
@@ -263,6 +271,16 @@ export async function generateApplicationPdf({
       )
       .join("\n");
     field(`Files Uploaded (${formData.bankStatements.length})`, lines);
+  }
+
+  // Section 4b — Underwriting (rep-supplied via URL; hidden from the applicant).
+  // Only populated values are drawn; with none, the section is omitted entirely.
+  const underwritingFields = UNDERWRITING_PARAMS.filter((key) => underwriting?.[key]);
+  if (underwritingFields.length) {
+    sectionTitle("Underwriting");
+    for (const key of underwritingFields) {
+      field(UNDERWRITING_LABELS[key], underwriting?.[key]);
+    }
   }
 
   // Section 5 — Authorization + signature

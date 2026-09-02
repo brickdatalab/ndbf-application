@@ -19,6 +19,7 @@ export function SignSubmit() {
   const prev = useAppStore((s) => s.prevStep);
   const appParam = useAppStore((s) => s.appParam);
   const utm = useAppStore((s) => s.utm);
+  const underwriting = useAppStore((s) => s.underwriting);
   const markSubmitted = useAppStore((s) => s.markSubmitted);
 
   const [submitting, setSubmitting] = useState(false);
@@ -57,6 +58,7 @@ export function SignSubmit() {
       pdfLayoutVersion: PDF_LAYOUT_VERSION,
       appParam,
       utm,
+      underwriting,
       formData: {
         ...f,
         // bank statement files are sent separately via FormData; strip from JSON.
@@ -74,6 +76,7 @@ export function SignSubmit() {
         submittedAtIso: submittedAtClient,
         appParam,
         formData: f,
+        underwriting,
       });
 
       // 2. Convert the PDF data URL to a Blob so it can ride in FormData.

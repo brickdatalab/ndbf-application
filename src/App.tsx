@@ -10,6 +10,11 @@ import { SignSubmit } from "./steps/SignSubmit";
 import { Confirmation } from "./steps/Confirmation";
 import { useAppStore } from "./store";
 import { getUrlPrefill, removeUrlPrefillParams } from "./lib/prefill";
+import {
+  getUrlUnderwriting,
+  hasUnderwritingValues,
+  removeUrlUnderwritingParams,
+} from "./lib/underwriting";
 import { resolveAttribution } from "./lib/attribution";
 import { analytics, type StepName } from "./lib/analytics";
 
@@ -27,6 +32,7 @@ export default function App() {
   const isSubmitted = useAppStore((s) => s.isSubmitted);
   const setAppParam = useAppStore((s) => s.setAppParam);
   const setUtm = useAppStore((s) => s.setUtm);
+  const setUnderwriting = useAppStore((s) => s.setUnderwriting);
   const updateFormData = useAppStore((s) => s.updateFormData);
   const viewedSteps = useRef(new Set<number>());
 
@@ -47,7 +53,13 @@ export default function App() {
     const prefill = getUrlPrefill(params);
     if (Object.keys(prefill).length) updateFormData(prefill);
 
-    const sanitizedParams = removeUrlPrefillParams(params);
+    // Hidden underwriting values (rep-supplied). Only overwrite session state
+    // when the URL carries at least one, so a refresh after the URL has been
+    // scrubbed keeps what was captured on first load.
+    const underwriting = getUrlUnderwriting(params);
+    if (hasUnderwritingValues(underwriting)) setUnderwriting(underwriting);
+
+    const sanitizedParams = removeUrlUnderwritingParams(removeUrlPrefillParams(params));
     if (sanitizedParams.toString() !== params.toString()) {
       const query = sanitizedParams.toString();
       const sanitizedUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
@@ -57,7 +69,7 @@ export default function App() {
     analytics.setAttribution(attribution);
     analytics.initialize();
     setSpeedInsightsReady(true);
-  }, [setAppParam, setUtm, updateFormData]);
+  }, [setAppParam, setUtm, setUnderwriting, updateFormData]);
 
   useEffect(() => {
     if (isSubmitted || viewedSteps.current.has(currentStep)) return;

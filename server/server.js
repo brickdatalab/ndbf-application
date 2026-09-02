@@ -133,6 +133,11 @@ function pickStr(v) {
   return s.length ? s : null;
 }
 
+function pickStrCapped(v, maxLength) {
+  const s = pickStr(v);
+  return s ? s.slice(0, maxLength) : null;
+}
+
 function monthYearToStartDate(m, y) {
   const month = pickNum(m);
   const year = pickNum(y);
@@ -152,6 +157,7 @@ export function buildBqRow({ entryId, submittedAt, payload, pdfLayoutVersion, pd
   const addr = f.physicalAddress || {};
   const oAddr = owner.address || {};
   const utm = payload.utm || {};
+  const uw = payload.underwriting || {};
   const { m: startedM, y: startedY } = monthYearToStartDate(f.businessStartedMonth, f.businessStartedYear);
 
   return {
@@ -186,6 +192,14 @@ export function buildBqRow({ entryId, submittedAt, payload, pdfLayoutVersion, pd
     business_entity_type: pickStr(f.businessEntityType),
     gross_annual_sales_bucket: mapSalesBucket(f.grossAnnualSalesBucket),
     requested_funding_amount: pickNum(f.requestedFundingAmount),
+
+    // Hidden underwriting values passed in the application URL
+    // (src/lib/underwriting.ts). Strings, optional, NULL when absent.
+    avg_monthly_deposits: pickStrCapped(uw.avg_monthly_deposits, 100),
+    total_mca_debits: pickStrCapped(uw.total_mca_debits, 100),
+    avg_balance: pickStrCapped(uw.avg_balance, 100),
+    avg_negative_balance_days: pickStrCapped(uw.avg_negative_balance_days, 100),
+    open_mca: pickStrCapped(uw.open_mca, 400),
 
     owner_full_name: pickStr(owner.fullName),
     owner_ownership_percentage: pickNum(owner.ownershipPercentage),

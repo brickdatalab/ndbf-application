@@ -129,6 +129,13 @@ CREATE TABLE IF NOT EXISTS `lithe-hallway-493420-r4.ndbf_applications.submission
   gross_annual_sales_bucket STRING,
   requested_funding_amount NUMERIC,
 
+  -- Hidden underwriting values from the application URL (added 2026-09-02; strings, optional, NULL when absent)
+  avg_monthly_deposits STRING,
+  total_mca_debits STRING,
+  avg_balance STRING,
+  avg_negative_balance_days STRING,
+  open_mca STRING,
+
   -- Ownership (Part 3, single owner)
   owner_full_name STRING,
   owner_ownership_percentage INT64,
