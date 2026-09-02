@@ -4,8 +4,10 @@ Five-step business-funding application. Vite + React + TypeScript frontend on Ve
 
 Live URLs:
 
-- **Frontend:** `https://<vercel-project>.vercel.app` *(custom domain `application.nextdaybizfunding.com` once DNS is added)*
-- **Backend API:** `https://136-119-104-124.nip.io` *(custom domain `api.nextdaybizfunding.com` once DNS is added)*
+- **Frontend:** `https://application.nextdaybizfunding.com` (live)
+- **Backend API:** `https://136-119-104-124.nip.io` — what production actually calls.
+  `https://api.nextdaybizfunding.com` resolves and serves the same backend, but
+  `VITE_API_URL` in Vercel has not been switched over.
 
 When a user fills out the form and clicks Submit:
 
@@ -14,6 +16,9 @@ When a user fills out the form and clicks Submit:
 3. Backend uploads everything to `gs://app_banks/{slug(business_legal_name)}_{entry_id}/`.
 4. Backend inserts one row into `ndbf_applications.submissions` in BigQuery.
 5. User sees a confirmation screen with their real `entry_id`.
+6. Backend publishes to `submission-completed`; `ndbf-emailer` on the VM emails the
+   underwriters the signed PDF plus every bank statement, then POSTs the full
+   BigQuery row to the ClearScrub Flow webhook. See `emailer/README.md`.
 
 ## Repo layout
 
@@ -85,6 +90,33 @@ https://ndbf-application.vercel.app/?app=nicole&utm_source=mailgun&first_name=Ji
 `(XXX) XXX-XXXX` format as manual entry. All populated values remain editable.
 PII-prefill and recipient-level parameters are removed with
 `history.replaceState` before GTM loads.
+
+### Hidden underwriting parameters
+
+Added 2026-09-02 (`src/lib/underwriting.ts`). Five values a rep puts in the link.
+They are **not** form fields — nothing is rendered, nothing is editable, and the
+applicant never sees them. All five are optional strings, kept in session state
+for the length of the visit, and scrubbed from the URL with the PII prefill
+params before GTM loads.
+
+| URL parameter | PDF label | Max length |
+|---|---|---|
+| `avg_monthly_deposits` | AVG MONTHLY DEPOSITS | 100 |
+| `total_mca_debits` | TOTAL MCA DEBITS | 100 |
+| `avg_balance` | AVG BALANCE | 100 |
+| `avg_negative_balance_days` | AVG NEGATIVE BALANCE DAYS | 100 |
+| `open_mca` | OPEN MCA | 400 |
+
+Each populated value gets a line in a new "Underwriting" section of the generated
+PDF, placed after "Bank Statements"; a value that is absent or blank is omitted,
+and the section itself is omitted when all five are. Values over the cap are
+truncated, not rejected. Each also lands in its own `STRING` column in
+`ndbf_applications.submissions` and therefore in the submission webhook payload.
+The alert email body is unchanged.
+
+`n8n-build-url-code-node.js` in the workspace root is the n8n Code node that
+builds these links: it drops absent keys, rounds the four numeric values to whole
+numbers, reduces the phone to ten digits, and cuts `open_mca` to 400 characters.
 
 ## Analytics
 

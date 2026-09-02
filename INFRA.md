@@ -157,7 +157,17 @@ CREATE TABLE IF NOT EXISTS `lithe-hallway-493420-r4.ndbf_applications.submission
 
   -- Raw payload for schema-evolution safety; excludes the duplicate base64
   -- signature image, which remains embedded in the signed PDF stored in GCS.
-  raw_payload_json STRING
+  raw_payload_json STRING,
+
+  -- PDF provenance, written by the backend at submit time. The emailer refuses
+  -- to attach a PDF whose bytes do not match pdf_source_sha256.
+  pdf_layout_version STRING,
+  pdf_source_generation STRING,
+  pdf_source_sha256 STRING,
+
+  -- Extraction provider lock (declared for the AI pipeline; never written yet)
+  extraction_provider STRING,
+  extraction_provider_locked_at TIMESTAMP
 )
 PARTITION BY DATE(submitted_at)
 CLUSTER BY app_param, business_legal_name;
@@ -212,10 +222,14 @@ gcloud pubsub subscriptions create application-pdf-ready-emailer \
   --expiration-period=never
 ```
 
-For versioned submissions with bank statements, `submission-completed-emailer`
-defers without sending. `application-pdf-ready-emailer` sends only after the
-finalizer stores and publishes the completed PDF. There is no polling deadline
-or blank-PDF fallback.
+**Superseded 2026-08-28 (commit `7341594`).** Email delivery no longer waits on
+the finalizer. `submission-completed-emailer` sends every alert immediately from
+the source PDF, verified against `pdf_source_generation` + `pdf_source_sha256`.
+`application-pdf-ready-emailer` still consumes its subscription but acks
+finalized-PDF events without sending, so underwriters get exactly one alert per
+application. The finalized PDF is an enrichment stored in GCS only. The
+paragraph this replaces described the original gated design; the deferred branch
+and `resolveFinalArtifact` remain in `emailer/delivery-gate.js` as dead code.
 
 Deploy the self-contained finalizer to a timestamped release, atomically repoint
 `/opt/ndbf-pdf-finalizer`, then start it under PM2:
@@ -255,7 +269,9 @@ Installed by us:
 - pm2 6.x globally (`sudo npm install -g pm2`)
 - Caddy 2.11.x (Cloudsmith stable repo) — see Caddyfile below
 
-## 8. Backend service — `/opt/ndbf-backend/`
+## 8. Node services on the VM
+
+### 8a. Backend — `/opt/ndbf-backend/`
 
 Source: this repo's `server/` folder.
 
@@ -276,6 +292,29 @@ sudo pm2 startup systemd -u vitolo --hp /home/vitolo
 ```
 
 Listens on `0.0.0.0:8080`. Caddy reverse-proxies to it.
+
+### 8b. Alert emailer — `/opt/ndbf-emailer/`
+
+Source: this repo's `emailer/` folder. Subscribes to `submission-completed-emailer`
+(sends) and `application-pdf-ready-emailer` (acks only). Full contract, email
+body, attachment rules and webhook behaviour: `emailer/README.md`.
+
+Deploy is a file copy plus a pm2 restart — no build step:
+
+```bash
+scp emailer/*.js emailer/package.json vitolo@136.119.104.124:/opt/ndbf-emailer/
+ssh vitolo@136.119.104.124 "cd /opt/ndbf-emailer && npm install --omit=dev && pm2 restart ndbf-emailer --update-env && pm2 save"
+```
+
+Environment (`/opt/ndbf-emailer/.env`, values never in git): `PROJECT_ID`,
+`SUBSCRIPTION`, `PDF_READY_EMAIL_SUBSCRIPTION`, `BQ_DATASET`, `BQ_TABLE`,
+`BUCKET_NAME`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `FROM`,
+`EMAIL_TO`, `SUBMISSION_WEBHOOK_URL`.
+
+`SUBMISSION_WEBHOOK_URL` defaults to `https://flow.clearscrub.io/webhook/ndbf-application`;
+setting it to an empty string disables the POST. The startup log line ends in
+`webhook=on` or `webhook=off`, and each delivery logs
+`webhook=delivered status=… attempts=…`.
 
 ## 9. Caddy — TLS + reverse proxy
 
