@@ -4,9 +4,11 @@ import test from "node:test";
 
 import {
   SUBSCRIBER_FLOW_CONTROL,
+  buildSubmissionWebhookPayload,
   createExplicitAttachmentLoader,
   createFinalArtifactResolver,
   createMessageHandler,
+  createSubmissionWebhookNotifier,
   parseApplicationPdfReadyEvent,
   shouldDeferSubmissionEmail,
 } from "./delivery-gate.js";
@@ -208,4 +210,160 @@ test("attachment loader reads only the declared bank-statement keys", async () =
   const result = await loader(row(), artifact());
   assert.deepEqual(reads, ["gs://app_banks/test/bank_01_june.pdf"]);
   assert.equal(result.attachments.length, 2);
+});
+
+// ---------- Submission webhook ----------
+
+function bqRow() {
+  // Shapes the @google-cloud/bigquery client actually returns: TIMESTAMP/DATE
+  // wrappers with a single `value`, NUMERIC as a Big-like object, INTEGER as
+  // number, REPEATED as array, raw_payload_json as a JSON string.
+  return row({
+    submitted_at: { value: "2026-09-01T18:15:38.000Z" },
+    owner_dob: { value: "1980-01-02" },
+    requested_funding_amount: { toNumber: () => 50000, toString: () => "50000" },
+    business_started_year: 2015,
+    terms_accepted: true,
+    industry_other: null,
+    extraction_provider_locked_at: null,
+    bank_statement_gcs_keys: ["gs://app_banks/test/bank_01_june.pdf", "gs://app_banks/test/bank_02_july.pdf"],
+    raw_payload_json: JSON.stringify({ appParam: "nicole", formData: { contactName: "Test", bankStatements: [{ name: "june.pdf" }, { name: "july.pdf" }] } }),
+  });
+}
+
+test("webhook payload mirrors the BigQuery row with plain JSON values and the raw payload expanded", () => {
+  const payload = buildSubmissionWebhookPayload(bqRow());
+  assert.equal(payload.entry_id, "ndbf_test");
+  assert.equal(payload.submitted_at, "2026-09-01T18:15:38.000Z");
+  assert.equal(payload.owner_dob, "1980-01-02");
+  assert.equal(payload.requested_funding_amount, 50000);
+  assert.equal(payload.business_started_year, 2015);
+  assert.equal(payload.terms_accepted, true);
+  assert.equal(payload.industry_other, null);
+  assert.equal(payload.extraction_provider_locked_at, null);
+  assert.deepEqual(payload.bank_statement_gcs_keys, [
+    "gs://app_banks/test/bank_01_june.pdf",
+    "gs://app_banks/test/bank_02_july.pdf",
+  ]);
+  assert.equal(payload.raw_payload_json.appParam, "nicole");
+  assert.equal(payload.raw_payload_json.formData.bankStatements.length, 2);
+  assert.equal(JSON.parse(JSON.stringify(payload)).requested_funding_amount, 50000);
+});
+
+test("webhook payload keeps raw_payload_json as a string when it is not valid JSON", () => {
+  const payload = buildSubmissionWebhookPayload(row({ raw_payload_json: "{not json" }));
+  assert.equal(payload.raw_payload_json, "{not json");
+});
+
+test("webhook fires once, after the email is accepted and the message is acked", async () => {
+  const sequence = [];
+  const calls = [];
+  const msg = message({ entry_id: "ndbf_test" });
+  const originalAck = msg.ack.bind(msg);
+  msg.ack = () => { sequence.push("ack"); originalAck(); };
+  const handle = handler({
+    fetchSubmission: async () => bqRow(),
+    sendMail: async () => { sequence.push("smtp"); return { accepted: true }; },
+    notifyWebhook: async (row) => { sequence.push("webhook"); calls.push(row); return { delivered: true, status: 200, attempts: 1 }; },
+  });
+  await handle(msg);
+  assert.deepEqual(sequence, ["smtp", "ack", "webhook"]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].entry_id, "ndbf_test");
+  assert.equal(msg.ackCount, 1);
+  assert.equal(msg.nackCount, 0);
+});
+
+test("webhook failure never NACKs or re-sends the email", async () => {
+  let sends = 0;
+  const errors = [];
+  const msg = message({ entry_id: "ndbf_test" });
+  const handle = handler({
+    sendMail: async () => { sends += 1; return { accepted: true }; },
+    notifyWebhook: async () => { throw new Error("boom"); },
+    logger: { info() {}, warn() {}, error(line) { errors.push(line); } },
+  });
+  await handle(msg);
+  assert.equal(sends, 1);
+  assert.equal(msg.ackCount, 1);
+  assert.equal(msg.nackCount, 0);
+  assert.ok(errors.some((line) => line.includes("webhook=failed")));
+});
+
+test("webhook does not fire when SMTP fails", async () => {
+  let webhookCalls = 0;
+  const msg = message({ entry_id: "ndbf_test" });
+  const handle = handler({
+    sendMail: async () => { throw new Error("smtp down"); },
+    notifyWebhook: async () => { webhookCalls += 1; },
+  });
+  await handle(msg);
+  assert.equal(webhookCalls, 0);
+  assert.equal(msg.nackCount, 1);
+});
+
+test("webhook does not fire for the PDF-ready event", async () => {
+  let webhookCalls = 0;
+  const msg = message(readyEvent());
+  const handle = handler({ notifyWebhook: async () => { webhookCalls += 1; } });
+  await handle(msg);
+  assert.equal(webhookCalls, 0);
+  assert.equal(msg.ackCount, 1);
+});
+
+test("handler without a webhook configured behaves exactly as before", async () => {
+  const msg = message({ entry_id: "ndbf_test" });
+  await handler({ notifyWebhook: null })(msg);
+  assert.equal(msg.ackCount, 1);
+  assert.equal(msg.nackCount, 0);
+});
+
+function notifier(responses, overrides = {}) {
+  const requests = [];
+  const queue = [...responses];
+  const notify = createSubmissionWebhookNotifier({
+    url: "https://example.test/webhook",
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      const next = queue.shift();
+      if (next instanceof Error) throw next;
+      return { ok: next >= 200 && next < 300, status: next };
+    },
+    sleep: async () => {},
+    logger: { info() {}, warn() {}, error() {} },
+    ...overrides,
+  });
+  return { notify, requests };
+}
+
+test("notifier POSTs the JSON payload and reports delivery", async () => {
+  const { notify, requests } = notifier([200]);
+  const result = await notify(bqRow());
+  assert.deepEqual(result, { delivered: true, status: 200, attempts: 1 });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://example.test/webhook");
+  assert.equal(requests[0].init.method, "POST");
+  assert.equal(requests[0].init.headers["content-type"], "application/json");
+  const body = JSON.parse(requests[0].init.body);
+  assert.equal(body.entry_id, "ndbf_test");
+  assert.equal(body.raw_payload_json.appParam, "nicole");
+});
+
+test("notifier retries on 5xx and network errors, then gives up without throwing", async () => {
+  const retried = notifier([503, new Error("ECONNRESET"), 200]);
+  assert.deepEqual(await retried.notify(bqRow()), { delivered: true, status: 200, attempts: 3 });
+  const exhausted = notifier([500, 500, 500]);
+  assert.deepEqual(await exhausted.notify(bqRow()), { delivered: false, status: 500, attempts: 3 });
+  const network = notifier([new Error("a"), new Error("b"), new Error("c")]);
+  assert.deepEqual(await network.notify(bqRow()), { delivered: false, status: "network_error", attempts: 3 });
+});
+
+test("notifier does not retry a 4xx rejection", async () => {
+  const { notify, requests } = notifier([404, 200]);
+  assert.deepEqual(await notify(bqRow()), { delivered: false, status: 404, attempts: 1 });
+  assert.equal(requests.length, 1);
+});
+
+test("notifier is disabled when the URL is empty", () => {
+  assert.equal(createSubmissionWebhookNotifier({ url: "" }), null);
 });

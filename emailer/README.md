@@ -7,8 +7,8 @@ Decoupled Pub/Sub subscriber that emails Josh + Fab every time a new application
 ## Flow
 
 ```
-submission-completed ──▶ submission-completed-emailer ──▶ load source PDF ──▶ SMTP
-application-pdf-ready ─▶ application-pdf-ready-emailer ─▶ ack only (no duplicate email)
+submission-completed ──▶ submission-completed-emailer ──▶ load source PDF ──▶ SMTP ──▶ ack ──▶ POST submission webhook
+application-pdf-ready ─▶ application-pdf-ready-emailer ─▶ ack only (no duplicate email, no webhook)
 ```
 
 Email delivery is deliberately decoupled from the AI underwriting pipeline. Every
@@ -30,6 +30,27 @@ The submission event owns delivery for every submission. `application-pdf-ready-
 acknowledges finalized-PDF events without emailing, so underwriters receive exactly
 one alert per application.
 
+## Submission webhook
+
+After the alert email is accepted by SMTP and the Pub/Sub message is acked, the
+worker POSTs one JSON document per submission to `SUBMISSION_WEBHOOK_URL`
+(default `https://flow.clearscrub.io/webhook/ndbf-application`).
+
+- **Body:** the full `submissions` BigQuery row, one key per column, with
+  `raw_payload_json` expanded into the object the form posted. Timestamps and
+  dates are ISO strings, `bank_statement_gcs_keys` is an array (one entry per
+  uploaded statement). Same shape as `submission example mapping.json` at the
+  workspace root.
+- **Ordering:** strictly after `smtp=accepted`. It never delays the applicant's
+  submit and never gates the email.
+- **Failure handling:** best-effort. Up to 3 attempts, 10 s timeout each, 2 s
+  apart, retried only on 5xx / 429 / network errors. The outcome is logged as
+  `webhook=delivered|failed status=<code> attempts=<n>`. A failure never NACKs
+  the message (that would re-send the alert). There is no durable retry: if all
+  attempts fail, the row is still in BigQuery and the log line is the signal.
+- **Off switch:** set `SUBMISSION_WEBHOOK_URL=` (empty) and restart.
+- **Not fired** for `application-pdf-ready` events or when SMTP fails.
+
 ## Environment variables (set in `pm2` ecosystem file or via systemd env)
 
 | Var | Required | Default |
@@ -46,6 +67,7 @@ one alert per application.
 | `SMTP_PASS` | **yes** | (Google App Password — 16 chars) |
 | `FROM` | no | `NextDay Biz Funding <SMTP_USER>` |
 | `EMAIL_TO` | no | `Josh@theapprovaldept.com,fab@theapprovaldept.com` |
+| `SUBMISSION_WEBHOOK_URL` | no | `https://flow.clearscrub.io/webhook/ndbf-application` (empty string disables) |
 
 ## Deploying changes
 

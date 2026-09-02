@@ -6,6 +6,9 @@
 //   3. Composes an email with every form field unredacted (phone + email shown
 //      in full) and attaches only the declared PDF + bank statement objects.
 //   4. Sends via Gmail SMTP (App Password auth) to the recipients in EMAIL_TO.
+//   5. After the email is accepted and the message acked, POSTs the full
+//      BigQuery row (raw_payload_json expanded) to SUBMISSION_WEBHOOK_URL.
+//      Best-effort: failures are logged and never affect the email.
 //
 // This service is intentionally decoupled from the main backend — if it crashes
 // or the SMTP relay rejects a message, submissions still succeed end-to-end.
@@ -17,11 +20,13 @@ import { BigQuery } from "@google-cloud/bigquery";
 import nodemailer from "nodemailer";
 import { pathToFileURL } from "node:url";
 import {
+  SUBMISSION_WEBHOOK_DEFAULT_URL,
   SUBSCRIBER_FLOW_CONTROL,
   createExplicitAttachmentLoader,
   createFinalArtifactResolver,
   createMessageHandler,
   createSourcePdfLoader,
+  createSubmissionWebhookNotifier,
   parseGsUri,
 } from "./delivery-gate.js";
 
@@ -50,6 +55,10 @@ const EMAIL_TO = (
   .filter(Boolean);
 
 const MAX_TOTAL_ATTACHMENT_BYTES = 24 * 1024 * 1024; // ~24MB safety margin under Gmail's 25MB cap
+
+// Set SUBMISSION_WEBHOOK_URL to an empty string to turn the webhook off
+// without a code change.
+const SUBMISSION_WEBHOOK_URL = process.env.SUBMISSION_WEBHOOK_URL ?? SUBMISSION_WEBHOOK_DEFAULT_URL;
 
 // ---------- Helpers ----------
 
@@ -359,6 +368,7 @@ export function startEmailer({
     readObject: readGcsObject,
     maxTotalBytes: MAX_TOTAL_ATTACHMENT_BYTES,
   });
+  const notifyWebhook = createSubmissionWebhookNotifier({ url: SUBMISSION_WEBHOOK_URL });
   const handleMessage = createMessageHandler({
     fetchSubmission: (entryId) => fetchBqRow(bigquery, entryId),
     loadSourcePdf,
@@ -368,13 +378,14 @@ export function startEmailer({
     sendMail: (email) => transporter.sendMail(email),
     defaultRecipients: EMAIL_TO,
     from: FROM,
+    notifyWebhook,
     logger,
   });
   const subscriptions = [SUBMISSION_SUBSCRIPTION, PDF_READY_SUBSCRIPTION].map(
     (name) => pubsub.subscription(name, { flowControl: SUBSCRIBER_FLOW_CONTROL }),
   );
   logger.info(
-    `[emailer] starting subscriptions=${SUBMISSION_SUBSCRIPTION},${PDF_READY_SUBSCRIPTION} project=${PROJECT_ID} smtp=${SMTP_HOST}:${SMTP_PORT} recipient_count=${EMAIL_TO.length}`,
+    `[emailer] starting subscriptions=${SUBMISSION_SUBSCRIPTION},${PDF_READY_SUBSCRIPTION} project=${PROJECT_ID} smtp=${SMTP_HOST}:${SMTP_PORT} recipient_count=${EMAIL_TO.length} webhook=${notifyWebhook ? "on" : "off"}`,
   );
   for (const subscription of subscriptions) {
     subscription.on("message", handleMessage);

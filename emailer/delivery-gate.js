@@ -10,6 +10,8 @@ export const SUBSCRIBER_FLOW_CONTROL = Object.freeze({
   maxExtensionMinutes: 10,
 });
 
+export const SUBMISSION_WEBHOOK_DEFAULT_URL = "https://flow.clearscrub.io/webhook/ndbf-application";
+
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const GENERATION_PATTERN = /^[0-9]+$/;
 const ENTRY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -233,6 +235,79 @@ function safeErrorCode(error) {
   return error instanceof EmailerError ? error.code : "UNEXPECTED_FAILURE";
 }
 
+// Convert a BigQuery client row into plain JSON: TIMESTAMP/DATE wrappers
+// ({ value }) become their string, NUMERIC (Big) becomes a number, arrays and
+// nested objects are walked, null stays null.
+function normalizeBqValue(value) {
+  if (value === null || value === undefined) return null;
+  if (Buffer.isBuffer(value)) return value.toString("base64");
+  if (Array.isArray(value)) return value.map(normalizeBqValue);
+  if (typeof value === "object") {
+    if (typeof value.toNumber === "function") return value.toNumber();
+    const keys = Object.keys(value);
+    if (keys.length === 1 && keys[0] === "value") return value.value;
+    const out = {};
+    for (const [key, nested] of Object.entries(value)) out[key] = normalizeBqValue(nested);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * The submission webhook body: the full `submissions` row, one key per column,
+ * with `raw_payload_json` expanded into the object the form actually posted.
+ */
+export function buildSubmissionWebhookPayload(row) {
+  const payload = normalizeBqValue(row);
+  if (typeof payload.raw_payload_json === "string") {
+    try {
+      payload.raw_payload_json = JSON.parse(payload.raw_payload_json);
+    } catch {
+      // Keep the original string rather than drop the column.
+    }
+  }
+  return payload;
+}
+
+/**
+ * POSTs the submission payload to an external webhook. Best-effort by design:
+ * bounded retries, never throws, and the caller only runs it after the alert
+ * email has been accepted and the Pub/Sub message acked.
+ */
+export function createSubmissionWebhookNotifier({
+  url,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 10_000,
+  maxAttempts = 3,
+  retryDelayMs = 2_000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  if (!url) return null;
+  return async function notifySubmissionWebhook(row) {
+    const body = JSON.stringify(buildSubmissionWebhookPayload(row));
+    let status = null;
+    let attempts = 0;
+    while (attempts < maxAttempts) {
+      attempts += 1;
+      try {
+        const response = await fetchImpl(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        status = response.status;
+        if (response.ok) return { delivered: true, status, attempts };
+        if (status < 500 && status !== 429) break;
+      } catch {
+        status = "network_error";
+      }
+      if (attempts < maxAttempts) await sleep(retryDelayMs);
+    }
+    return { delivered: false, status, attempts };
+  };
+}
+
 export function createMessageHandler({
   fetchSubmission,
   loadSourcePdf,
@@ -242,6 +317,7 @@ export function createMessageHandler({
   sendMail,
   defaultRecipients,
   from,
+  notifyWebhook = null,
   logger = console,
 }) {
   return async function handleMessage(message) {
@@ -316,6 +392,19 @@ export function createMessageHandler({
       });
       message.ack();
       logger.info(`[emailer] msg=${messageId} entry=${entryId} smtp=accepted pdf=${kind} attachments=${email.attachments.length}`);
+      if (notifyWebhook) {
+        // Runs strictly after the email is accepted and the message is acked.
+        // A webhook failure is logged and nothing else: it must never NACK
+        // (which would re-send the alert) and never affects the submission.
+        try {
+          const result = await notifyWebhook(row);
+          logger.info(
+            `[emailer] msg=${messageId} entry=${entryId} webhook=${result?.delivered ? "delivered" : "failed"} status=${result?.status ?? "unknown"} attempts=${result?.attempts ?? 0}`,
+          );
+        } catch (error) {
+          logger.error(`[emailer] msg=${messageId} entry=${entryId} webhook=failed error=${safeErrorCode(error)}`);
+        }
+      }
     } catch (error) {
       message.nack();
       logger.error(`[emailer] msg=${messageId} entry=${entryId} error=${safeErrorCode(error)}`);
