@@ -37,6 +37,11 @@ type PdfArgs = {
 const PAGE_W = 210; // A4 mm
 const MARGIN_X = 18;
 const RIGHT = PAGE_W - MARGIN_X;
+// Watermark size, pinned literally rather than measured at runtime: it feeds the
+// layout fingerprint, so a jsPDF metrics change must never move it silently.
+// 72 x (223.520 / 280.924) — the widths of "nextdaybizfunding" and
+// "theapprovaldepartment" at 72pt, so the longer word keeps the old footprint.
+const WATERMARK_FONT_SIZE_PT = 57.2875226039783;
 
 // Brand colors (RGB)
 const C_NAVY: [number, number, number] = [0, 33, 64];
@@ -63,7 +68,7 @@ export async function generateApplicationPdf({
   doc.setProperties(layout.metadata);
   let y = 18;
 
-  // Diagonal "nextdaybizfunding" watermark drawn first on every page so it sits
+  // Diagonal "theapprovaldepartment" watermark drawn first on every page so it sits
   // behind all subsequent content. Faint navy at low opacity, rotated ~30° so it
   // runs from the bottom-left toward the upper-right corner of the page.
   const drawWatermark = () => {
@@ -76,9 +81,9 @@ export async function generateApplicationPdf({
     const GState = (doc as any).GState;
     if (GState) doc.setGState(new GState({ opacity: 0.07 }));
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(72);
+    doc.setFontSize(WATERMARK_FONT_SIZE_PT);
     doc.setTextColor(...C_NAVY);
-    doc.text("nextdaybizfunding", pageW / 2, pageH / 2, {
+    doc.text("theapprovaldepartment", pageW / 2, pageH / 2, {
       align: "center",
       angle: 30,
       baseline: "middle",
@@ -94,7 +99,7 @@ export async function generateApplicationPdf({
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
-    doc.text("NextDay Biz Funding — Application", MARGIN_X, 9.5);
+    doc.text("The Approval Department — Application", MARGIN_X, 9.5);
     y = 22;
   };
 

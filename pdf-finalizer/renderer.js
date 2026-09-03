@@ -17,6 +17,11 @@ const BODY = rgb(48 / 255, 55 / 255, 62 / 255);
 const MUTED = rgb(120 / 255, 120 / 255, 120 / 255);
 const RULE = rgb(220 / 255, 220 / 255, 220 / 255);
 const GREEN = rgb(24 / 255, 145 / 255, 87 / 255);
+// Watermark size, pinned literally rather than measured at runtime, so the
+// finalized PDF keeps the same footprint as the source PDF it mirrors.
+// 72 x (223.520 / 280.924) — the widths of "nextdaybizfunding" and
+// "theapprovaldepartment" at 72pt.
+const WATERMARK_FONT_SIZE_PT = 57.2875226039783;
 
 const MONTHS = [
   "Jan",
@@ -236,10 +241,10 @@ function drawBlocksInBand({ page, blocks, fonts, topMm, bottomMm }) {
 }
 
 function drawWatermark(page, font) {
-  page.drawText("nextdaybizfunding", {
+  page.drawText("theapprovaldepartment", {
     x: mm(35),
     y: mm(95),
-    size: 72,
+    size: WATERMARK_FONT_SIZE_PT,
     font,
     color: NAVY,
     opacity: 0.07,
@@ -255,7 +260,7 @@ function drawHeader(page, fonts, entryId) {
     height: mm(14),
     color: NAVY,
   });
-  page.drawText("NextDay Biz Funding — Application", {
+  page.drawText("The Approval Department — Application", {
     x: mm(LEFT_MM),
     y: page.getHeight() - mm(9.5),
     size: 13,
@@ -307,7 +312,7 @@ function drawFooter(page, font) {
     thickness: 0.55,
     color: RULE,
   });
-  page.drawText("NextDay Biz Funding  |  Confidential Application", {
+  page.drawText("The Approval Department  |  Confidential Application", {
     x: mm(LEFT_MM),
     y: mm(8),
     size: 7.5,

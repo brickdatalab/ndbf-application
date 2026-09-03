@@ -7,8 +7,9 @@ export const PDF_LAYOUT_CONTRACTS = Object.freeze({
     underwritingPage: Object.freeze({ position: "last" }),
     writableRect: Object.freeze({ xMm: 18, yMm: 38, widthMm: 174, heightMm: 236 }),
     anchor: "NDBF_PDF_LAYOUT|underwriting-v1|page=underwriting|rect=18,38,174,236",
-    decodedLastPageContentSha256: "05a439277a6d1d89a84e1a68913482d793964781241069dd67d15ca66398c323",
+    decodedLastPageContentSha256: "cced2961f5bc296511d52b7c93560be3ebf7f34270d742937f771af00679eaa9",
     acceptedDecodedLastPageContentSha256: Object.freeze([
+      "cced2961f5bc296511d52b7c93560be3ebf7f34270d742937f771af00679eaa9",
       "05a439277a6d1d89a84e1a68913482d793964781241069dd67d15ca66398c323",
       "5d89f8df5d19e02b4bd7e9149606f7ce618fdcd950677c5c87e81e1c830de5b0",
       "7f6780285f894c62eeb1e8105ccebc51852834672ffaf69ca8b7dc547976b632",

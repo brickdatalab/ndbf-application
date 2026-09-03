@@ -51,12 +51,28 @@ describe("underwriting-v1 signed source PDF", () => {
     );
     const raw = pdfBuffer.toString("latin1");
 
-    expect((raw.match(/\/Type \/Page\n/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    const pageCount = (raw.match(/\/Type \/Page\n/g) ?? []).length;
+    expect(pageCount).toBeGreaterThanOrEqual(2);
     expect(raw.match(/\/MediaBox \[0 0 595\.\d+ 841\.\d+\]/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(raw).toContain(`(${contract?.metadata.subject})`);
     expect(raw).toContain(`(${contract?.anchor})`);
     expect(raw.split(contract?.anchor ?? "").length - 1).toBe(1);
-    expect(raw).toContain("(nextdaybizfunding) Tj");
+    expect(raw).toContain("(theapprovaldepartment) Tj");
+    // The watermark is drawn by two separate code paths — src/lib/pdf.ts for the
+    // body pages and shared/pdf-underwriting-page.js for the fingerprinted last
+    // page. Only the last one is fingerprinted, so this is what stops them
+    // drifting apart silently.
+    expect((raw.match(/\(theapprovaldepartment\) Tj/g) ?? []).length).toBe(pageCount);
+    // The old trading name must not survive anywhere that is drawn on a page.
+    // The fingerprint only covers the last page, so it cannot answer this.
+    // The Info dictionary /Title deliberately still reads "NextDay Biz Funding
+    // Signed Application" — the validator compares it with exact equality and no
+    // historical-values list, so changing it would invalidate every stored PDF.
+    const drawn = [...raw.matchAll(/\nstream\n([\s\S]*?)\nendstream/g)]
+      .map((match) => match[1])
+      .join("\n");
+    expect(drawn).not.toContain("NextDay Biz Funding");
+    expect(drawn).not.toContain("nextdaybizfunding");
     expect(raw).toContain("(BANK STATEMENT UNDERWRITING) Tj");
     expect(raw).toContain("(Statement Summary) Tj");
     expect(raw).not.toContain("(Statement period) Tj");
@@ -68,7 +84,7 @@ describe("underwriting-v1 signed source PDF", () => {
 
     const pageStreams = [...raw.matchAll(/\nstream\n([\s\S]*?)\nendstream/g)];
     const lastPageStream = pageStreams.at(-1)?.[1] ?? "";
-    expect(lastPageStream).toContain("(nextdaybizfunding) Tj");
+    expect(lastPageStream).toContain("(theapprovaldepartment) Tj");
     expect(lastPageStream).not.toMatch(/\$\d/);
     expect(fingerprintDecodedUnderwritingPageContent(lastPageStream, 2)).toBe(
       contract?.decodedLastPageContentSha256,

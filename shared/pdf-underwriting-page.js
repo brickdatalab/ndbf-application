@@ -5,6 +5,11 @@ const NAVY = [0, 33, 64];
 const BLUE = [0, 117, 223];
 const MUTED = [120, 120, 120];
 const RULE = [220, 220, 220];
+// Watermark size, pinned literally rather than measured at runtime: it feeds the
+// layout fingerprint, so a jsPDF metrics change must never move it silently.
+// 72 x (223.520 / 280.924) — the widths of "nextdaybizfunding" and
+// "theapprovaldepartment" at 72pt, so the longer word keeps the old footprint.
+const WATERMARK_FONT_SIZE_PT = 57.2875226039783;
 
 export function addUnderwritingSourcePage(document, layout) {
   // jsPDF serializes the active stroke state at page creation. Set it here so
@@ -23,9 +28,9 @@ export function drawUnderwritingSourcePage(document, layout) {
   const GState = document.GState;
   if (GState) document.setGState(new GState({ opacity: 0.07 }));
   document.setFont("helvetica", "bold");
-  document.setFontSize(72);
+  document.setFontSize(WATERMARK_FONT_SIZE_PT);
   document.setTextColor(...NAVY);
-  document.text("nextdaybizfunding", pageWidth / 2, pageHeight / 2, {
+  document.text("theapprovaldepartment", pageWidth / 2, pageHeight / 2, {
     align: "center",
     angle: 30,
     baseline: "middle",
@@ -37,7 +42,7 @@ export function drawUnderwritingSourcePage(document, layout) {
   document.setTextColor(255, 255, 255);
   document.setFont("helvetica", "bold");
   document.setFontSize(13);
-  document.text("NextDay Biz Funding — Application", MARGIN_X_MM, 9.5);
+  document.text("The Approval Department — Application", MARGIN_X_MM, 9.5);
 
   document.setFont("helvetica", "bold");
   document.setFontSize(layout.rendering.label.fontSizePt);
@@ -103,7 +108,7 @@ export function drawSourcePdfFooter(document, pageNumber, pageTotal) {
   document.setFont("helvetica", "normal");
   document.setFontSize(7.5);
   document.text(
-    "NextDay Biz Funding  |  Confidential Application",
+    "The Approval Department  |  Confidential Application",
     MARGIN_X_MM,
     pageHeight - 8,
   );
