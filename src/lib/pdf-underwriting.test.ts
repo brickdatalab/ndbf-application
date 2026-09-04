@@ -4,7 +4,14 @@ import { PDF_LAYOUT_VERSION, getPdfLayoutContract } from "../../shared/pdf-layou
 import { fingerprintDecodedUnderwritingPageContent } from "../../shared/pdf-layout-fingerprint.js";
 import { validateDeclaredPdfLayout } from "../../shared/pdf-layout-validator.js";
 import { generateApplicationPdf } from "./pdf";
-import { EMPTY_UNDERWRITING } from "./underwriting";
+import { EMPTY_UNDERWRITING, UNDERWRITING_LABELS } from "./underwriting";
+
+/**
+ * The drawn form of a field label: uppercased by pdf.ts, then PDF-string
+ * escaped by jsPDF, which backslash-escapes parentheses.
+ */
+const drawnLabel = (key: keyof typeof UNDERWRITING_LABELS) =>
+  `(${UNDERWRITING_LABELS[key].toUpperCase().replace(/[()]/g, (c) => `\\${c}`)}) Tj`;
 
 const formData: FormData = {
   contactName: "Synthetic Applicant",
@@ -55,11 +62,11 @@ describe("Underwriting section on the application PDF", () => {
     });
 
     expect(raw).toContain("(UNDERWRITING) Tj");
-    expect(raw).toContain("(AVG MONTHLY DEPOSITS) Tj");
+    expect(raw).toContain(drawnLabel("avg_monthly_deposits"));
     expect(raw).toContain("($52,340.00) Tj");
-    expect(raw).toContain("(AVG BALANCE) Tj");
+    expect(raw).toContain(drawnLabel("avg_balance"));
     expect(raw).toContain("(1250.55) Tj");
-    expect(raw).toContain("(OPEN MCA) Tj");
+    expect(raw).toContain(drawnLabel("open_mca"));
     expect(raw).toContain("(Yes - 2 positions) Tj");
     expect(raw).not.toContain("(TOTAL MCA DEBITS) Tj");
     expect(raw).not.toContain("(AVG NEGATIVE BALANCE DAYS) Tj");
@@ -88,7 +95,7 @@ describe("Underwriting section on the application PDF", () => {
     const long = Array.from({ length: 40 }, (_, i) => `Lender${i + 1}`).join(" ");
     const { raw } = await renderRaw({ ...EMPTY_UNDERWRITING, open_mca: long });
 
-    expect(raw).toContain("(OPEN MCA) Tj");
+    expect(raw).toContain(drawnLabel("open_mca"));
     expect(raw).toContain("Lender1 ");
     expect(raw).toContain("Lender40");
   });
@@ -97,8 +104,8 @@ describe("Underwriting section on the application PDF", () => {
     for (const underwriting of [EMPTY_UNDERWRITING, null, undefined]) {
       const { raw, buffer } = await renderRaw(underwriting);
       expect(raw).not.toContain("(UNDERWRITING) Tj");
-      expect(raw).not.toContain("(AVG MONTHLY DEPOSITS) Tj");
-      expect(raw).not.toContain("(OPEN MCA) Tj");
+      expect(raw).not.toContain(drawnLabel("avg_monthly_deposits"));
+      expect(raw).not.toContain(drawnLabel("open_mca"));
       await expect(
         validateDeclaredPdfLayout({ declaredVersion: PDF_LAYOUT_VERSION, pdfBuffer: buffer }),
       ).resolves.toBe(PDF_LAYOUT_VERSION);

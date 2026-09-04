@@ -101,11 +101,11 @@ params before GTM loads.
 
 | URL parameter | PDF label | Max length |
 |---|---|---|
-| `avg_monthly_deposits` | AVG MONTHLY DEPOSITS | 100 |
-| `total_mca_debits` | TOTAL MCA DEBITS | 100 |
-| `avg_balance` | AVG BALANCE | 100 |
-| `avg_negative_balance_days` | AVG NEGATIVE BALANCE DAYS | 100 |
-| `open_mca` | OPEN MCA | 600 |
+| `avg_monthly_deposits` | AVG MONTHLY DEPOSITS (TRUE REVENUE OVER ALL STATEMENTS) | 100 |
+| `total_mca_debits` | TOTAL MCA DEBITS (SUM OF MCA DEBITS OVER MOST RECENT STATEMENT) | 100 |
+| `avg_balance` | AVERAGE DAILY BALANCE (MOST RECENT STATEMENT) | 100 |
+| `avg_negative_balance_days` | NEGATIVE ENDING BALANCE DAYS (MOST RECENT STATEMENT) | 100 |
+| `open_mca` | ACTIVE MCA LENDERS, FREQUENCEY, AMOUNT (MOST RECENT STATEMENT | 600 |
 
 Each populated value gets a line in a new "Underwriting" section of the generated
 PDF, placed after "Bank Statements"; a value that is absent or blank is omitted,

@@ -16,12 +16,15 @@ export const UNDERWRITING_PARAMS = [
 export type UnderwritingParam = (typeof UNDERWRITING_PARAMS)[number];
 export type UnderwritingValues = Record<UnderwritingParam, string | null>;
 
+// Printed on the application PDF only. src/lib/pdf.ts uppercases every field
+// label at render time, so these appear in full caps regardless of the case
+// written here.
 export const UNDERWRITING_LABELS: Record<UnderwritingParam, string> = {
-  avg_monthly_deposits: "Avg Monthly Deposits",
-  total_mca_debits: "Total MCA Debits",
-  avg_balance: "Avg Balance",
-  avg_negative_balance_days: "Avg Negative Balance Days",
-  open_mca: "Open MCA",
+  avg_monthly_deposits: "AVG MONTHLY DEPOSITS (True Revenue over all statements)",
+  total_mca_debits: "TOTAL MCA DEBITS (sum of mca debits over most recent statement)",
+  avg_balance: "AVERAGE DAILY BALANCE (most recent statement)",
+  avg_negative_balance_days: "NEGATIVE ENDING BALANCE DAYS (most recent statement)",
+  open_mca: "ACTIVE MCA LENDERS, FREQUENCEY, AMOUNT (most recent statement",
 };
 
 const DEFAULT_MAX_LENGTH = 100;
