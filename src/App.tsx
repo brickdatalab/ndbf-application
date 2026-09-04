@@ -50,7 +50,10 @@ export default function App() {
       referrer: document.referrer || null,
     });
 
-    const prefill = getUrlPrefill(params);
+    const prefill = getUrlPrefill(
+      params,
+      useAppStore.getState().formData.physicalAddress,
+    );
     if (Object.keys(prefill).length) updateFormData(prefill);
 
     // Hidden underwriting values (rep-supplied). Only overwrite session state

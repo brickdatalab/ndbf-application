@@ -42,9 +42,85 @@ describe("getUrlPrefill", () => {
     });
   });
 
+  it("maps the business address parameters into physicalAddress", () => {
+    expect(
+      getUrlPrefill(
+        new URLSearchParams(
+          "business_street=12+Main+St+Ste+4&business_city=Brooklyn&business_state=ny&business_zip=11201"
+        )
+      )
+    ).toEqual({
+      physicalAddress: {
+        street: "12 Main St Ste 4",
+        city: "Brooklyn",
+        state: "NY",
+        zip: "11201",
+      },
+    });
+  });
+
+  it("fills only the address parts the URL carries and leaves the rest blank", () => {
+    expect(getUrlPrefill(new URLSearchParams("business_city=Austin"))).toEqual({
+      physicalAddress: { street: "", city: "Austin", state: "", zip: "" },
+    });
+  });
+
+  it("omits physicalAddress entirely when no address parameter is present", () => {
+    expect(getUrlPrefill(new URLSearchParams("email=a%40b.co"))).toEqual({
+      contactEmail: "a@b.co",
+    });
+  });
+
+  it("keeps address parts already in state when the URL carries only some", () => {
+    expect(
+      getUrlPrefill(new URLSearchParams("business_city=Austin"), {
+        street: "12 Main St",
+        city: "Brooklyn",
+        state: "NY",
+        zip: "11201",
+      })
+    ).toEqual({
+      physicalAddress: {
+        street: "12 Main St",
+        city: "Austin",
+        state: "NY",
+        zip: "11201",
+      },
+    });
+  });
+
+  it("ignores a state that is not a US state code", () => {
+    expect(getUrlPrefill(new URLSearchParams("business_state=New+York"))).toEqual({});
+    expect(getUrlPrefill(new URLSearchParams("business_state=XX"))).toEqual({});
+  });
+
+  it("keeps only the first five digits of the ZIP", () => {
+    expect(getUrlPrefill(new URLSearchParams("business_zip=11201-3410"))).toEqual({
+      physicalAddress: { street: "", city: "", state: "", zip: "11201" },
+    });
+    expect(getUrlPrefill(new URLSearchParams("business_zip=abc"))).toEqual({});
+  });
+
+  it("formats the EIN the same way the form field does", () => {
+    expect(getUrlPrefill(new URLSearchParams("ein=123456789"))).toEqual({
+      federalTaxId: "12-3456789",
+    });
+    expect(getUrlPrefill(new URLSearchParams("ein=12-3456789"))).toEqual({
+      federalTaxId: "12-3456789",
+    });
+    expect(getUrlPrefill(new URLSearchParams("ein=12+3456789"))).toEqual({
+      federalTaxId: "12-3456789",
+    });
+    // Digits beyond nine are dropped, matching formatEIN's cap.
+    expect(getUrlPrefill(new URLSearchParams("ein=1234567890000"))).toEqual({
+      federalTaxId: "12-3456789",
+    });
+    expect(getUrlPrefill(new URLSearchParams("ein=not-an-ein"))).toEqual({});
+  });
+
   it("removes PII prefill parameters while retaining attribution parameters", () => {
     const params = new URLSearchParams(
-      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym&prefill=secret&contact_id=1&recipient_id=2&message_id=3&application_id=4&entry_id=5"
+      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym&ein=12-3456789&business_street=12+Main+St&business_city=Brooklyn&business_state=NY&business_zip=11201&prefill=secret&contact_id=1&recipient_id=2&message_id=3&application_id=4&entry_id=5"
     );
 
     expect(removeUrlPrefillParams(params).toString()).toBe(
