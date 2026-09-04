@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { FormData } from "../store";
-import { PDF_LAYOUT_VERSION, getPdfLayoutContract } from "../../shared/pdf-layout-contract.js";
-import { fingerprintDecodedUnderwritingPageContent } from "../../shared/pdf-layout-fingerprint.js";
-import { validateDeclaredPdfLayout } from "../../shared/pdf-layout-validator.js";
 import { generateApplicationPdf } from "./pdf";
 import { EMPTY_UNDERWRITING, UNDERWRITING_LABELS } from "./underwriting";
 
@@ -54,7 +51,7 @@ async function renderRaw(underwriting: Parameters<typeof generateApplicationPdf>
 
 describe("Underwriting section on the application PDF", () => {
   it("draws only the populated values, in order, under an Underwriting title", async () => {
-    const { raw, buffer } = await renderRaw({
+    const { raw } = await renderRaw({
       ...EMPTY_UNDERWRITING,
       avg_monthly_deposits: "$52,340.00",
       avg_balance: "1250.55",
@@ -77,18 +74,10 @@ describe("Underwriting section on the application PDF", () => {
     expect(order.every((i) => i >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
 
-    // The dedicated last page is untouched, so the server-side layout check still passes.
-    const contract = getPdfLayoutContract(PDF_LAYOUT_VERSION);
-    const pageStreams = [...raw.matchAll(/\nstream\n([\s\S]*?)\nendstream/g)];
-    const pageCount = (raw.match(/\/Type \/Page\n/g) ?? []).length;
-    const lastPageStream = pageStreams.at(-1)?.[1] ?? "";
-    expect(lastPageStream).not.toContain("(UNDERWRITING) Tj");
-    expect(fingerprintDecodedUnderwritingPageContent(lastPageStream, pageCount)).toBe(
-      contract?.decodedLastPageContentSha256,
-    );
-    await expect(
-      validateDeclaredPdfLayout({ declaredVersion: PDF_LAYOUT_VERSION, pdfBuffer: buffer }),
-    ).resolves.toBe(PDF_LAYOUT_VERSION);
+    // The document now ends on the authorization page, so the Underwriting
+    // section is the last thing drawn before the signature block.
+    expect(raw).not.toContain("(Statement Summary) Tj");
+    expect(raw).not.toContain("NDBF_PDF_LAYOUT");
   });
 
   it("wraps a long open_mca value instead of truncating it", async () => {
@@ -102,13 +91,10 @@ describe("Underwriting section on the application PDF", () => {
 
   it("draws no Underwriting section when every value is null or the object is absent", async () => {
     for (const underwriting of [EMPTY_UNDERWRITING, null, undefined]) {
-      const { raw, buffer } = await renderRaw(underwriting);
+      const { raw } = await renderRaw(underwriting);
       expect(raw).not.toContain("(UNDERWRITING) Tj");
       expect(raw).not.toContain(drawnLabel("avg_monthly_deposits"));
       expect(raw).not.toContain(drawnLabel("open_mca"));
-      await expect(
-        validateDeclaredPdfLayout({ declaredVersion: PDF_LAYOUT_VERSION, pdfBuffer: buffer }),
-      ).resolves.toBe(PDF_LAYOUT_VERSION);
     }
   });
 });

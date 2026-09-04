@@ -21,10 +21,7 @@ import {
   PDF_LAYOUT_VERSION,
   getPdfLayoutContract,
 } from "../../shared/pdf-layout-contract.js";
-import {
-  addUnderwritingSourcePage,
-  drawSourcePdfFooter,
-} from "../../shared/pdf-underwriting-page.js";
+import { drawSourcePdfFooter } from "../../shared/pdf-underwriting-page.js";
 
 type PdfArgs = {
   submittedAtIso: string;
@@ -348,9 +345,11 @@ export async function generateApplicationPdf({
 
   y += 30;
 
-  // Dedicated versioned underwriting shell. It intentionally contains headings
-  // only: the immutable signed source never carries provisional or fake values.
-  addUnderwritingSourcePage(doc, layout);
+  // The document ends on the authorization and signature. The versioned
+  // underwriting shell that used to follow is no longer appended: it was drawn
+  // blank on every submission and the finalizer that was meant to fill it has
+  // had no input since 2026-08-06. Removing it is why the submit payload no
+  // longer declares a pdfLayoutVersion — see src/steps/SignSubmit.tsx.
 
   // Footer on every page
   const pageTotal = doc.getNumberOfPages();

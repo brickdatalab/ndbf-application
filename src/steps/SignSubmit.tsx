@@ -6,7 +6,6 @@ import { Checkbox } from "../components/ui/Input";
 import { SignaturePad } from "../components/SignaturePad";
 import { TERMS_PARAGRAPHS } from "../lib/terms";
 import { generateApplicationPdf } from "../lib/pdf";
-import { PDF_LAYOUT_VERSION } from "../../shared/pdf-layout-contract.js";
 import {
   analytics,
   classifySubmissionError,
@@ -55,7 +54,10 @@ export function SignSubmit() {
     // Build the payload the backend will write to BigQuery.
     const payload = {
       clientSubmittedAt: submittedAtClient,
-      pdfLayoutVersion: PDF_LAYOUT_VERSION,
+      // No pdfLayoutVersion: the PDF no longer carries the underwriting shell
+      // the layout contract fingerprints, so there is nothing to validate. The
+      // server, the emailer and the finalizer all already handle an absent
+      // version — it is the path pre-underwriting submissions took.
       appParam,
       utm,
       underwriting,

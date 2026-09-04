@@ -11,7 +11,9 @@ describe("successful application submission flow", () => {
   });
 
   it("keeps the generated PDF in the multipart backend request", () => {
-    expect(source).toContain("pdfLayoutVersion: PDF_LAYOUT_VERSION");
+    // The payload deliberately carries no pdfLayoutVersion: the PDF no longer
+    // contains the underwriting shell the layout contract fingerprints.
+    expect(source).not.toMatch(/^\s*pdfLayoutVersion:/m);
     expect(source).toContain('fd.append("pdf", pdfBlob');
     expect(source).toContain('fd.append("banks", file, file.name)');
     expect(source).toContain('fetch(`${apiBase}/api/submit`');
