@@ -9,7 +9,11 @@ import { BankStatements } from "./steps/BankStatements";
 import { SignSubmit } from "./steps/SignSubmit";
 import { Confirmation } from "./steps/Confirmation";
 import { useAppStore } from "./store";
-import { getUrlPrefill, removeUrlPrefillParams } from "./lib/prefill";
+import {
+  getUrlOwnerAddress,
+  getUrlPrefill,
+  removeUrlPrefillParams,
+} from "./lib/prefill";
 import {
   getUrlUnderwriting,
   hasUnderwritingValues,
@@ -34,6 +38,7 @@ export default function App() {
   const setUtm = useAppStore((s) => s.setUtm);
   const setUnderwriting = useAppStore((s) => s.setUnderwriting);
   const updateFormData = useAppStore((s) => s.updateFormData);
+  const updateOwner = useAppStore((s) => s.updateOwner);
   const viewedSteps = useRef(new Set<number>());
 
   // Resolve safe attribution before applying and removing PII-prefill parameters.
@@ -50,11 +55,15 @@ export default function App() {
       referrer: document.referrer || null,
     });
 
-    const prefill = getUrlPrefill(
-      params,
-      useAppStore.getState().formData.physicalAddress,
-    );
+    const { physicalAddress, owner } = useAppStore.getState().formData;
+
+    const prefill = getUrlPrefill(params, physicalAddress);
     if (Object.keys(prefill).length) updateFormData(prefill);
+
+    // The owner address goes through updateOwner so the rest of the owner —
+    // name, SSN, DOB, ownership — is left alone.
+    const ownerAddress = getUrlOwnerAddress(params, owner.address);
+    if (ownerAddress) updateOwner({ address: ownerAddress });
 
     // Hidden underwriting values (rep-supplied). Only overwrite session state
     // when the URL carries at least one, so a refresh after the URL has been
@@ -72,7 +81,7 @@ export default function App() {
     analytics.setAttribution(attribution);
     analytics.initialize();
     setSpeedInsightsReady(true);
-  }, [setAppParam, setUtm, setUnderwriting, updateFormData]);
+  }, [setAppParam, setUtm, setUnderwriting, updateFormData, updateOwner]);
 
   useEffect(() => {
     if (isSubmitted || viewedSteps.current.has(currentStep)) return;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getUrlPrefill, removeUrlPrefillParams } from "./prefill";
+import { getUrlOwnerAddress, getUrlPrefill, removeUrlPrefillParams } from "./prefill";
 
 describe("getUrlPrefill", () => {
   it("maps direct URL parameters to the application fields", () => {
@@ -118,9 +118,71 @@ describe("getUrlPrefill", () => {
     expect(getUrlPrefill(new URLSearchParams("ein=not-an-ein"))).toEqual({});
   });
 
+  it("reduces the requested amount to whole dollars", () => {
+    expect(getUrlPrefill(new URLSearchParams("amount_requested=200000"))).toEqual({
+      requestedFundingAmount: "200000",
+    });
+    // Cents are dropped, not concatenated — "200000.00" must not become 20,000,000.
+    expect(getUrlPrefill(new URLSearchParams("amount_requested=200000.00"))).toEqual({
+      requestedFundingAmount: "200000",
+    });
+    expect(getUrlPrefill(new URLSearchParams("amount_requested=%24200%2C000.50"))).toEqual({
+      requestedFundingAmount: "200000",
+    });
+    expect(getUrlPrefill(new URLSearchParams("amount_requested=none"))).toEqual({});
+    expect(getUrlPrefill(new URLSearchParams("amount_requested=0"))).toEqual({});
+  });
+
+  it("maps the owner address parameters", () => {
+    expect(
+      getUrlOwnerAddress(
+        new URLSearchParams(
+          "owner_street=1097+QUIET+RD&owner_city=MOUNT+PLEASANT&owner_state=sc&owner_zip=29464"
+        )
+      )
+    ).toEqual({
+      street: "1097 QUIET RD",
+      city: "MOUNT PLEASANT",
+      state: "SC",
+      zip: "29464",
+    });
+  });
+
+  it("returns null when the URL carries no owner address part", () => {
+    expect(getUrlOwnerAddress(new URLSearchParams("business_city=Austin"))).toBeNull();
+  });
+
+  it("keeps owner address parts already in state when the URL carries only some", () => {
+    expect(
+      getUrlOwnerAddress(new URLSearchParams("owner_city=Austin"), {
+        street: "1097 QUIET RD",
+        city: "MOUNT PLEASANT",
+        state: "SC",
+        zip: "29464",
+      })
+    ).toEqual({
+      street: "1097 QUIET RD",
+      city: "Austin",
+      state: "SC",
+      zip: "29464",
+    });
+  });
+
+  it("applies the same state and ZIP rules to the owner address", () => {
+    expect(
+      getUrlOwnerAddress(new URLSearchParams("owner_state=District+of+Columbia&owner_zip=29464-1234"))
+    ).toEqual({ street: "", city: "", state: "", zip: "29464" });
+    expect(getUrlOwnerAddress(new URLSearchParams("owner_state=DC"))).toEqual({
+      street: "",
+      city: "",
+      state: "DC",
+      zip: "",
+    });
+  });
+
   it("removes PII prefill parameters while retaining attribution parameters", () => {
     const params = new URLSearchParams(
-      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym&ein=12-3456789&business_street=12+Main+St&business_city=Brooklyn&business_state=NY&business_zip=11201&prefill=secret&contact_id=1&recipient_id=2&message_id=3&application_id=4&entry_id=5"
+      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym&ein=12-3456789&business_street=12+Main+St&business_city=Brooklyn&business_state=NY&business_zip=11201&owner_street=9+Home+Ln&owner_city=Queens&owner_state=NY&owner_zip=11375&amount_requested=200000&prefill=secret&contact_id=1&recipient_id=2&message_id=3&application_id=4&entry_id=5"
     );
 
     expect(removeUrlPrefillParams(params).toString()).toBe(
