@@ -43,8 +43,8 @@ describe("getUrlUnderwriting", () => {
     expect(hasUnderwritingValues(null)).toBe(false);
   });
 
-  it("caps four values at 100 characters and open_mca at 400", () => {
-    const long = "x".repeat(500);
+  it("caps four values at 100 characters and open_mca at 600", () => {
+    const long = "x".repeat(700);
     const params = new URLSearchParams();
     for (const param of UNDERWRITING_PARAMS) params.set(param, long);
 
@@ -54,7 +54,7 @@ describe("getUrlUnderwriting", () => {
     expect(values.total_mca_debits).toHaveLength(100);
     expect(values.avg_balance).toHaveLength(100);
     expect(values.avg_negative_balance_days).toHaveLength(100);
-    expect(values.open_mca).toHaveLength(400);
+    expect(values.open_mca).toHaveLength(600);
   });
 
   it("does not validate or reformat numbers", () => {

@@ -75,8 +75,8 @@ test("writes NULL for every underwriting column when the values are absent, blan
   }
 });
 
-test("caps four columns at 100 characters and open_mca at 400", () => {
-  const long = "x".repeat(600);
+test("caps four columns at 100 characters and open_mca at 600", () => {
+  const long = "x".repeat(700);
   const result = row({
     underwriting: Object.fromEntries(UNDERWRITING_COLUMNS.map((column) => [column, long])),
   });
@@ -85,7 +85,7 @@ test("caps four columns at 100 characters and open_mca at 400", () => {
   assert.equal(result.total_mca_debits.length, 100);
   assert.equal(result.avg_balance.length, 100);
   assert.equal(result.avg_negative_balance_days.length, 100);
-  assert.equal(result.open_mca.length, 400);
+  assert.equal(result.open_mca.length, 600);
 });
 
 test("existing columns are unchanged by the underwriting object", () => {

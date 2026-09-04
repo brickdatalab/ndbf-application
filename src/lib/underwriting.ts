@@ -31,7 +31,7 @@ export const UNDERWRITING_MAX_LENGTH: Record<UnderwritingParam, number> = {
   total_mca_debits: DEFAULT_MAX_LENGTH,
   avg_balance: DEFAULT_MAX_LENGTH,
   avg_negative_balance_days: DEFAULT_MAX_LENGTH,
-  open_mca: 400,
+  open_mca: 600,
 };
 
 export const EMPTY_UNDERWRITING: UnderwritingValues = {

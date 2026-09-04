@@ -105,7 +105,7 @@ params before GTM loads.
 | `total_mca_debits` | TOTAL MCA DEBITS | 100 |
 | `avg_balance` | AVG BALANCE | 100 |
 | `avg_negative_balance_days` | AVG NEGATIVE BALANCE DAYS | 100 |
-| `open_mca` | OPEN MCA | 400 |
+| `open_mca` | OPEN MCA | 600 |
 
 Each populated value gets a line in a new "Underwriting" section of the generated
 PDF, placed after "Bank Statements"; a value that is absent or blank is omitted,
@@ -116,7 +116,7 @@ The alert email body is unchanged.
 
 `n8n-build-url-code-node.js` in the workspace root is the n8n Code node that
 builds these links: it drops absent keys, rounds the four numeric values to whole
-numbers, reduces the phone to ten digits, and cuts `open_mca` to 400 characters.
+numbers, reduces the phone to ten digits, and cuts `open_mca` to 600 characters.
 
 ## Analytics
 

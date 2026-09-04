@@ -199,7 +199,7 @@ export function buildBqRow({ entryId, submittedAt, payload, pdfLayoutVersion, pd
     total_mca_debits: pickStrCapped(uw.total_mca_debits, 100),
     avg_balance: pickStrCapped(uw.avg_balance, 100),
     avg_negative_balance_days: pickStrCapped(uw.avg_negative_balance_days, 100),
-    open_mca: pickStrCapped(uw.open_mca, 400),
+    open_mca: pickStrCapped(uw.open_mca, 600),
 
     owner_full_name: pickStr(owner.fullName),
     owner_ownership_percentage: pickNum(owner.ownershipPercentage),
