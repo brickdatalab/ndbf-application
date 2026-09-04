@@ -11,6 +11,7 @@ import { Confirmation } from "./steps/Confirmation";
 import { useAppStore } from "./store";
 import {
   getUrlOwnerAddress,
+  getUrlOwnerDob,
   getUrlPrefill,
   removeUrlPrefillParams,
 } from "./lib/prefill";
@@ -60,10 +61,13 @@ export default function App() {
     const prefill = getUrlPrefill(params, physicalAddress);
     if (Object.keys(prefill).length) updateFormData(prefill);
 
-    // The owner address goes through updateOwner so the rest of the owner —
-    // name, SSN, DOB, ownership — is left alone.
+    // Owner values go through updateOwner so prefilling one cannot clear the
+    // rest of the owner — name, SSN, ownership percentage.
     const ownerAddress = getUrlOwnerAddress(params, owner.address);
     if (ownerAddress) updateOwner({ address: ownerAddress });
+
+    const dob = getUrlOwnerDob(params);
+    if (dob) updateOwner({ dateOfBirth: dob });
 
     // Hidden underwriting values (rep-supplied). Only overwrite session state
     // when the URL carries at least one, so a refresh after the URL has been

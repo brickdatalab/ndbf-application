@@ -1,6 +1,10 @@
 import type { Address, FormData } from "../store";
-import { US_STATES } from "./constants";
+import { US_STATES, YEARS } from "./constants";
 import { formatEIN, formatPhone } from "./utils";
+
+/** Year bounds of the DOB picker (DOBPicker defaults: maxYear 2010, minYear maxYear - 100). */
+const DOB_MAX_YEAR = 2010;
+const DOB_MIN_YEAR = DOB_MAX_YEAR - 100;
 
 const FIELD_PARAMS: Record<string, keyof Pick<
   FormData,
@@ -19,6 +23,8 @@ const URL_PREFILL_PARAMS = [
   "business_legal_name",
   "ein",
   "amount_requested",
+  "start_date",
+  "dob",
   "business_street",
   "business_city",
   "business_state",
@@ -83,6 +89,56 @@ function getUrlAmount(searchParams: URLSearchParams): string | null {
   return dollars && dollars !== "0" ? dollars : null;
 }
 
+/**
+ * Month and year for "Date Business Started", from a full ISO date. The form
+ * has no day field, so the day is discarded. The month <option> values are
+ * unpadded ("1".."12"), so "07" has to become "7" or the select falls back to
+ * its placeholder. The year must be one the dropdown actually offers.
+ */
+function getUrlBusinessStart(
+  searchParams: URLSearchParams,
+): { month: string; year: string } | null {
+  const raw = searchParams.get("start_date")?.trim() ?? "";
+  const match = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(raw);
+  if (!match) return null;
+
+  const [, year, paddedMonth] = match;
+  const month = String(Number(paddedMonth));
+  if (Number(paddedMonth) < 1 || Number(paddedMonth) > 12) return null;
+  if (!YEARS.includes(year)) return null;
+
+  return { month, year };
+}
+
+/**
+ * The owner's date of birth as ISO `YYYY-MM-DD` — the same shape the picker
+ * emits, so this is a pass-through. Rejects dates outside the picker's year
+ * range and calendar impossibilities like 02-30: the selects would render
+ * blank while the store held a value that still satisfies the format check on
+ * submit, so the applicant would never see anything to correct.
+ */
+export function getUrlOwnerDob(searchParams: URLSearchParams): string | null {
+  const raw = searchParams.get("dob")?.trim() ?? "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) return null;
+
+  const [, year, month, day] = match;
+  if (Number(year) < DOB_MIN_YEAR || Number(year) > DOB_MAX_YEAR) return null;
+
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // Rejects 2026-02-30, which Date would otherwise roll forward into March.
+  if (
+    parsed.getUTCFullYear() !== Number(year) ||
+    parsed.getUTCMonth() + 1 !== Number(month) ||
+    parsed.getUTCDate() !== Number(day)
+  ) {
+    return null;
+  }
+
+  return raw;
+}
+
 /** The owner's address, applied separately because it lives inside `owner`. */
 export function getUrlOwnerAddress(
   searchParams: URLSearchParams,
@@ -119,6 +175,12 @@ export function getUrlPrefill(
 
   const amount = getUrlAmount(searchParams);
   if (amount) prefill.requestedFundingAmount = amount;
+
+  const started = getUrlBusinessStart(searchParams);
+  if (started) {
+    prefill.businessStartedMonth = started.month;
+    prefill.businessStartedYear = started.year;
+  }
 
   const address = getUrlAddress(searchParams, "business", currentAddress);
   if (address) prefill.physicalAddress = address;

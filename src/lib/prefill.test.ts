@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getUrlOwnerAddress, getUrlPrefill, removeUrlPrefillParams } from "./prefill";
+import {
+  getUrlOwnerAddress,
+  getUrlOwnerDob,
+  getUrlPrefill,
+  removeUrlPrefillParams,
+} from "./prefill";
 
 describe("getUrlPrefill", () => {
   it("maps direct URL parameters to the application fields", () => {
@@ -133,6 +138,44 @@ describe("getUrlPrefill", () => {
     expect(getUrlPrefill(new URLSearchParams("amount_requested=0"))).toEqual({});
   });
 
+  it("splits start_date into an unpadded month and a year", () => {
+    // "07" is not one of the month <option> values — only "7" is.
+    expect(getUrlPrefill(new URLSearchParams("start_date=2014-07-28"))).toEqual({
+      businessStartedMonth: "7",
+      businessStartedYear: "2014",
+    });
+    expect(getUrlPrefill(new URLSearchParams("start_date=2014-12"))).toEqual({
+      businessStartedMonth: "12",
+      businessStartedYear: "2014",
+    });
+  });
+
+  it("ignores a start_date outside the year dropdown or otherwise malformed", () => {
+    const nextYear = String(new Date().getFullYear() + 1);
+    expect(getUrlPrefill(new URLSearchParams(`start_date=${nextYear}-01-01`))).toEqual({});
+    expect(getUrlPrefill(new URLSearchParams("start_date=1919-01-01"))).toEqual({});
+    expect(getUrlPrefill(new URLSearchParams("start_date=2014-13-01"))).toEqual({});
+    expect(getUrlPrefill(new URLSearchParams("start_date=2014-00-01"))).toEqual({});
+    expect(getUrlPrefill(new URLSearchParams("start_date=July+2014"))).toEqual({});
+    expect(getUrlPrefill(new URLSearchParams("start_date=2014"))).toEqual({});
+  });
+
+  it("passes a valid dob through as ISO", () => {
+    expect(getUrlPrefill(new URLSearchParams("dob=1949-08-18"))).toEqual({});
+    expect(getUrlOwnerDob(new URLSearchParams("dob=1949-08-18"))).toBe("1949-08-18");
+    expect(getUrlOwnerDob(new URLSearchParams("dob=2010-12-31"))).toBe("2010-12-31");
+    expect(getUrlOwnerDob(new URLSearchParams("dob=1910-01-01"))).toBe("1910-01-01");
+  });
+
+  it("ignores a dob outside the picker range or not a real date", () => {
+    expect(getUrlOwnerDob(new URLSearchParams("dob=2011-01-01"))).toBeNull();
+    expect(getUrlOwnerDob(new URLSearchParams("dob=1909-12-31"))).toBeNull();
+    expect(getUrlOwnerDob(new URLSearchParams("dob=1949-02-30"))).toBeNull();
+    expect(getUrlOwnerDob(new URLSearchParams("dob=1949-8-18"))).toBeNull();
+    expect(getUrlOwnerDob(new URLSearchParams("dob=08%2F18%2F1949"))).toBeNull();
+    expect(getUrlOwnerDob(new URLSearchParams("business_city=Austin"))).toBeNull();
+  });
+
   it("maps the owner address parameters", () => {
     expect(
       getUrlOwnerAddress(
@@ -182,7 +225,7 @@ describe("getUrlPrefill", () => {
 
   it("removes PII prefill parameters while retaining attribution parameters", () => {
     const params = new URLSearchParams(
-      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym&ein=12-3456789&business_street=12+Main+St&business_city=Brooklyn&business_state=NY&business_zip=11201&owner_street=9+Home+Ln&owner_city=Queens&owner_state=NY&owner_zip=11375&amount_requested=200000&prefill=secret&contact_id=1&recipient_id=2&message_id=3&application_id=4&entry_id=5"
+      "app=nicole&utm_source=mailgun&utm_campaign=july&first_name=Jim&last_name=Smith&full_name=James+Smith&email=jim%40example.com&phone=5555550100&business_legal_name=Jim%27s+Gym&ein=12-3456789&business_street=12+Main+St&business_city=Brooklyn&business_state=NY&business_zip=11201&owner_street=9+Home+Ln&owner_city=Queens&owner_state=NY&owner_zip=11375&amount_requested=200000&start_date=2014-07-28&dob=1949-08-18&prefill=secret&contact_id=1&recipient_id=2&message_id=3&application_id=4&entry_id=5"
     );
 
     expect(removeUrlPrefillParams(params).toString()).toBe(
